@@ -158,6 +158,7 @@
             clip-path: polygon(50% 100%, 0 0, 100% 0);
             filter: drop-shadow(0px 2px 2px rgba(255,0,0,0.5));
         }
+        #jumpscare-text { font-size: 2rem; font-weight: bold; color: var(--red); margin-top: 20px; z-index: 1001; text-shadow: 2px 2px 5px black; }
         
         @keyframes flashColor {
             0% { background-color: #ff0000; }
@@ -297,7 +298,7 @@
 
     <script>
         /**
-         * АУДІО ДВИЖОК (Web Audio API & Custom Files)
+         * АУДІО ДВИЖОК (Web Audio API)
          */
         class AudioEngine {
             constructor() { this.ctx = null; }
@@ -344,9 +345,7 @@
                     gain.gain.linearRampToValueAtTime(0, now + 0.3);
                     osc.connect(gain); gain.connect(this.ctx.destination);
                     osc.start(); osc.stop(now + 0.3);
-                } catch(e) {
-                    console.error("Doll audio failed", e);
-                }
+                } catch(e) {}
             }
             
             playJumpscare() {
@@ -366,13 +365,14 @@
                     
                     noise.connect(gain); gain.connect(this.ctx.destination);
                     noise.start(); noise.stop(now + 1.0);
-                } catch(e) {
-                    console.error("Jumpscare audio failed", e);
-                }
+                } catch(e) {}
             }
         }
         const sfx = new AudioEngine();
 
+        /**
+         * ГОЛОВНИЙ ОБ'ЄКТ ДОДАТКУ ГРИ
+         */
         const app = {
             mode: 'menu', 
             isMobile: ('ontouchstart' in window) || navigator.maxTouchPoints > 0,
@@ -385,13 +385,14 @@
             scene: null, camera: null, renderer: null, clock: new THREE.Clock(),
             walls: [], vents: [], generators: [], officeDoors: [], exitGate: null, flickeringLamps: [],
             spookyDolls: [],
-            monsterSpawnPos: null,
+            monsterSpawnPos: new THREE.Vector3(45, 0, 45),
+            officePos: new THREE.Vector3(42, 0, 18),
             
             player: {
                 mesh: null, role: 'Survivor', hp: 100, stamina: 100, battery: 60,
-                speed: 5.5, jumpForce: 8, yVelocity: 0, isGrounded: true,
+                speed: 5.5, jumpForce: 6, yVelocity: 0, isGrounded: true,
                 cooldown: 0, isHidden: false, currentVentIdx: -1, height: 1.6,
-                stepTimer: 0
+                stepTimer: 0, stunnedTimer: 0
             },
             
             monster: {
@@ -406,15 +407,30 @@
             touch: { joyActive: false, origin:{x:0,y:0}, delta:{x:0,y:0}, lookId: null, lastLook:{x:0,y:0} }
         };
 
+        // Лабіринт мапи структури 14x14
+        const MAP_GRID = [
+            [1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1],
+            [1,0,0,0,1,0,0,0,0,0,1,0,0,0,0,1],
+            [1,0,1,0,1,0,1,1,1,0,1,0,1,1,0,1],
+            [1,0,1,0,0,0,0,0,1,0,0,0,1,0,0,1],
+            [1,0,1,1,1,1,1,0,1,1,1,1,1,0,1,1],
+            [1,0,0,0,0,0,1,0,0,0,0,0,0,0,0,1],
+            [1,1,1,0,1,0,1,1,1,1,1,0,1,1,0,1],
+            [1,0,0,0,1,0,0,0,3,0,1,0,1,0,0,1], // 3 - Офіс зарядки
+            [1,0,1,1,1,1,1,1,0,1,1,0,1,1,0,1],
+            [1,0,1,0,0,0,0,1,0,1,0,0,0,1,0,1],
+            [1,0,0,0,1,1,0,0,0,0,0,1,0,0,0,1],
+            [1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1]
+        ];
+        const CELL_SIZE = 6;
+
         function createSafePeer(id) {
             try {
                 if (window.location.hostname.includes('usercontent') || window.location.protocol === 'data:') {
                     return null; 
                 }
                 return new Peer(id);
-            } catch(e) {
-                return null;
-            }
+            } catch(e) { return null; }
         }
 
         function genShortId() {
@@ -422,6 +438,14 @@
             let res = '';
             for(let i=0; i<4; i++) res += chars.charAt(Math.floor(Math.random() * chars.length));
             return res;
+        }
+
+        function showAlert(txt) {
+            const el = document.getElementById('alert-text');
+            if(el) {
+                el.innerText = txt;
+                setTimeout(() => { if(el.innerText === txt) el.innerText = ''; }, 3000);
+            }
         }
 
         app.showPanel = function(id) {
@@ -454,7 +478,6 @@
             sfx.playClick();
             app.mode = 'host';
             app.myId = genShortId();
-            
             app.peer = createSafePeer(app.myId);
             
             if (!app.peer) {
@@ -469,7 +492,7 @@
                     app.updateLobbyUI();
                     document.getElementById('btn-start-multi').style.display = 'block';
                     app.conn = { send: function(){} }; 
-                }, 1500);
+                }, 1000);
                 return;
             }
 
@@ -496,7 +519,7 @@
         app.joinRoom = function() {
             sfx.playClick();
             const id = document.getElementById('join-input').value.toUpperCase().trim();
-            if(id.length !== 4) return showAlert("ID має містити 4 символи!");
+            if(id.length !== 4) return alert("ID має містити 4 символи!");
             
             app.mode = 'client';
             app.peer = createSafePeer();
@@ -512,7 +535,7 @@
                     document.getElementById('ui-layer').style.display = 'none';
                     initGame();
                     spawnBotMonster(); 
-                }, 2500);
+                }, 1500);
                 return;
             }
 
@@ -522,22 +545,18 @@
                 app.conn.on('open', () => { app.showPanel('panel-lobby'); });
                 app.conn.on('data', handleNetworkData);
             });
-            app.peer.on('error', err => showAlert("Помилка: Невірний ID або кімната закрита."));
+            app.peer.on('error', err => alert("Помилка підключення. Перевірте ID кімнати."));
         }
 
         app.copyCode = function() {
             const id = document.getElementById('lobby-id').innerText;
-            const temp = document.createElement('input');
-            temp.value = id; document.body.appendChild(temp);
-            temp.select(); document.execCommand('copy');
-            document.body.removeChild(temp);
-            showAlert("Код " + id + " скопійовано!");
+            navigator.clipboard.writeText(id).then(() => {
+                showAlert("Код " + id + " скопійовано!");
+            });
         }
 
         app.startMultiplayer = function() {
             sfx.playClick();
-            
-            // ГАРАНТОВАНО РОЗДІЛЯЄМО РОЛІ: один обов'язково монстр, інший - виживший
             const survivors = ['Engineer', 'Hunter', 'Medic'];
             const p1IsMonster = Math.random() > 0.5;
             
@@ -551,14 +570,12 @@
             }
             
             app.player.role = p1Role;
-            if(app.conn && typeof app.conn.send === 'function') app.conn.send({ type: 'start', role: p2Role });
+            if(app.conn) app.conn.send({ type: 'start', role: p2Role });
             
             document.getElementById('ui-layer').style.display = 'none';
             initGame();
 
-            if (!app.peer) {
-                setTimeout(() => spawnBotMonster(), 500);
-            }
+            if (!app.peer) setTimeout(() => spawnBotMonster(), 500);
         }
 
         function handleNetworkData(data) {
@@ -574,25 +591,35 @@
             else if (data.type === 'update') {
                 if(!app.remotePlayers[data.id]) createRemotePlayer(data.id, data.role);
                 const rp = app.remotePlayers[data.id];
-                rp.targetPos = new THREE.Vector3(data.x, data.y, data.z);
-                rp.targetRot = data.ry;
-                rp.isHidden = data.hidden;
+                if(rp) {
+                    rp.targetPos.set(data.x, data.y, data.z);
+                    rp.targetRot = data.ry;
+                    rp.isHidden = data.hidden;
+                }
             }
             else if (data.type === 'gen_fix') {
-                app.generators[data.index].fixProgress = data.progress;
-                if(data.progress >= 100 && !app.generators[data.index].fixed) fixGenerator(data.index);
+                if(app.generators[data.index]) {
+                    app.generators[data.index].fixProgress = data.progress;
+                    if(data.progress >= 100 && !app.generators[data.index].fixed) fixGenerator(data.index);
+                }
             }
             else if (data.type === 'door_toggle') {
                 toggleOfficeDoors(data.state);
             }
             else if (data.type === 'monster_stun') {
-                app.monster.stunTimer = 3.0;
+                /* ВИПРАВЛЕННЯ 3: Врахування приголомшення живого гравця або бота */
+                if(app.player.role === 'Animatronic') {
+                    app.player.stunnedTimer = 3.0;
+                    showAlert("ВАС ПРИШОКОВАНО ТЕЙЗЕРОМ!");
+                } else {
+                    app.monster.stunTimer = 3.0;
+                }
                 sfx.playTaser();
             }
             else if (data.type === 'hit_player') {
                 if(app.myId === data.target && app.player.hp > 0) {
-                     app.player.hp -= 50; 
-                     showAlert("ВАС ВДАРИЛИ!");
+                     app.player.hp -= 40; 
+                     showAlert("ВАС ВДАРИВ МОНСТР!");
                      sfx.playMonsterHit(); 
                      if(app.player.hp <= 0) executeJumpscare();
                 }
@@ -603,7 +630,7 @@
         }
 
         function broadcastState() {
-            if(!app.conn || typeof app.conn.send !== 'function') return;
+            if(!app.conn || !app.camera) return;
             app.conn.send({
                 type: 'update', id: app.myId, role: app.player.role,
                 x: app.camera.position.x, y: app.camera.position.y, z: app.camera.position.z,
@@ -611,1276 +638,732 @@
             });
         }
 
+        /**
+         * 3D СВІТ ТА МОДЕЛЮВАННЯ (Three.js)
+         */
         function initGame() {
             const container = document.getElementById('game-container');
             container.style.display = 'block';
             document.getElementById('hud').style.display = 'block';
-
-            container.innerHTML = '';
+            if(app.isMobile) document.getElementById('touch-ui').style.display = 'block';
             
-            app.scene = new THREE.Scene();
-            app.scene.fog = new THREE.FogExp2(0x030202, 0.08); 
+            if(!app.isMobile) {
+                window.addEventListener('click', () => {
+                    container.requestPointerLock();
+                });
+            }
 
-            app.camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 150);
+            app.scene = new THREE.Scene();
+            app.scene.fog = new THREE.FogExp2(0x050303, 0.09); 
+
+            app.camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 100);
             app.camera.rotation.order = 'YXZ';
             
-            app.renderer = new THREE.WebGLRenderer({ antialias: false, powerPreference: "high-performance" });
+            // Початкова позиція локального гравця
+            if(app.player.role === 'Animatronic') {
+                app.camera.position.copy(app.monsterSpawnPos);
+                app.player.speed = 7.0;
+            } else {
+                app.camera.position.set(6, app.player.height, 6);
+                app.player.speed = 5.0;
+            }
+
+            app.renderer = new THREE.WebGLRenderer({ antialias: true });
             app.renderer.setSize(window.innerWidth, window.innerHeight);
             app.renderer.shadowMap.enabled = true;
-            app.renderer.shadowMap.type = THREE.PCFShadowMap; 
             container.appendChild(app.renderer.domElement);
 
-            app.scene.add(new THREE.AmbientLight(0x070606, 0.4)); 
-            
-            app.player.light = new THREE.SpotLight(0xfff6e0, 4, 25, Math.PI / 5, 0.4, 1.2);
-            app.player.light.castShadow = true;
-            app.player.light.shadow.mapSize.width = 512; 
-            app.player.light.shadow.mapSize.height = 512;
-            app.scene.add(app.player.light);
+            // Освітлення
+            const ambLight = new THREE.AmbientLight(0x110a0a);
+            app.scene.add(ambLight);
 
-            app.player.lightTarget = new THREE.Object3D();
-            app.scene.add(app.player.lightTarget);
-            app.player.light.target = app.player.lightTarget;
-
-            const alarmLight = new THREE.PointLight(0xff1111, 2, 18);
-            alarmLight.position.set(0, 4, 0); 
-            app.scene.add(alarmLight);
-            app.alarmLight = alarmLight;
-
-            app.walls = [];
-            app.vents = [];
-            app.generators = [];
-            app.officeDoors = [];
-            app.flickeringLamps = [];
-            app.spookyDolls = [];
-            app.fixedGenerators = 0;
-            app.escapeOpen = false;
-
-            buildMap();
-
-            if (app.player.role === 'Animatronic') {
-                app.camera.position.set(40, app.player.height, 40); 
-                app.player.speed = 7.0; 
+            // Власний ліхтарик вижившого
+            if(app.player.role !== 'Animatronic') {
+                const flashLight = new THREE.SpotLight(0xfff6e0, 2.5, 25, Math.PI/5, 0.5, 1);
+                flashLight.castShadow = true;
+                flashLight.name = "local_flashlight";
+                app.camera.add(flashLight);
+                flashLight.position.set(0,0,0);
+                flashLight.target = new THREE.Object3D();
+                app.camera.add(flashLight.target);
+                flashLight.target.position.set(0,0,-1);
+                app.scene.add(app.camera);
             } else {
-                app.camera.position.set(0, app.player.height, 3.5); 
+                // Червоні очі у темряві для монстра
+                const monsterLight = new THREE.PointLight(0xff0000, 1.2, 5);
+                app.camera.add(monsterLight);
+                app.scene.add(app.camera);
             }
 
-            if (app.mode === 'single') spawnBotMonster();
+            buildLabyrinth();
 
-            setupInputs();
+            // Створення супротивників у синглплеєрі
+            if(app.mode === 'single') {
+                spawnBotMonster();
+            } else {
+                // Мультиплеєр: повідомити іншого гравця про входження в світ
+                setTimeout(() => {
+                    broadcastState();
+                    if(app.mode === 'host' && Object.keys(app.remotePlayers).length === 0) {
+                        // Якщо гравець 2 виявився ботом штучним
+                        createRemotePlayer('bot_guest', 'Survivor');
+                    }
+                }, 1000);
+            }
+
+            window.addEventListener('resize', onWindowResize);
+            setupControls();
             
-            window.addEventListener('resize', onWindowResize, false);
-            app.clock.getDelta(); 
-            app.renderer.setAnimationLoop(gameLoop);
+            // Старт головного циклу рендерингу
+            app.clock.getElapsedTime();
+            app.renderer.setAnimationLoop(animate);
         }
 
-        function buildMap() {
-            const mapSize = 23;
-            const cellSize = 5;
-            const wallH = 5;
+        // Побудова геометрії карти лабіринту
+        function buildLabyrinth() {
+            const wallMat = new THREE.MeshPhongMaterial({ color: 0x1c1515, roughness: 0.9 });
+            const floorMat = new THREE.MeshPhongMaterial({ color: 0x111111, roughness: 0.8 });
+            const ceilingMat = new THREE.MeshPhongMaterial({ color: 0x0a0a0a });
 
-            const matFloor = new THREE.MeshPhongMaterial({ color: 0x18181a, shininess: 10 });
-            const matCeil = new THREE.MeshPhongMaterial({ color: 0x0a0a0a, shininess: 2 });
-            const matWall = new THREE.MeshPhongMaterial({ color: 0x241717, shininess: 5 }); 
-            const matOffice = new THREE.MeshPhongMaterial({ color: 0x283344, shininess: 20 });
+            const wallGeo = new THREE.BoxGeometry(CELL_SIZE, 4, CELL_SIZE);
+            const floorGeo = new THREE.PlaneGeometry(CELL_SIZE, CELL_SIZE);
 
-            const planeGeo = new THREE.PlaneGeometry(mapSize * cellSize, mapSize * cellSize);
-            const floor = new THREE.Mesh(planeGeo, matFloor);
-            floor.rotation.x = -Math.PI / 2;
-            floor.receiveShadow = true;
-            app.scene.add(floor);
-
-            const ceil = new THREE.Mesh(planeGeo, matCeil);
-            ceil.rotation.x = Math.PI / 2;
-            ceil.position.y = wallH;
-            app.scene.add(ceil);
-
-            const wallGeo = new THREE.BoxGeometry(cellSize, wallH, cellSize);
             let genCount = 0;
-            
-            let safeMonsterSpawnPoints = [];
 
-            for(let z = 0; z < mapSize; z++) {
-                for(let x = 0; x < mapSize; x++) {
-                    const wx = (x - Math.floor(mapSize / 2)) * cellSize;
-                    const wz = (z - Math.floor(mapSize / 2)) * cellSize;
+            for(let r=0; r<MAP_GRID.length; r++) {
+                for(let c=0; c<MAP_GRID[r].length; c++) {
+                    const x = c * CELL_SIZE + CELL_SIZE/2;
+                    const z = r * CELL_SIZE + CELL_SIZE/2;
 
-                    if(x === 0 || z === 0 || x === mapSize - 1 || z === mapSize - 1) {
-                        if (x === Math.floor(mapSize / 2) && z === 0) {
-                            createExitGate(wx, wz, cellSize, wallH); 
-                        } else {
-                            createWall(wx, wz, wallGeo, matWall);
-                        }
-                        continue;
-                    }
+                    // Підлога та стеля
+                    const floor = new THREE.Mesh(floorGeo, floorMat);
+                    floor.rotation.x = -Math.PI/2;
+                    floor.position.set(x, 0, z);
+                    floor.receiveShadow = true;
+                    app.scene.add(floor);
 
-                    const cx = Math.abs(x - Math.floor(mapSize / 2));
-                    const cz = Math.abs(z - Math.floor(mapSize / 2));
+                    const ceil = new THREE.Mesh(floorGeo, ceilingMat);
+                    ceil.rotation.x = Math.PI/2;
+                    ceil.position.set(x, 4, z);
+                    app.scene.add(ceil);
 
-                    if (cx <= 2 && cz <= 2) {
-                        const offFloor = new THREE.Mesh(new THREE.PlaneGeometry(cellSize, cellSize), matOffice);
-                        offFloor.rotation.x = -Math.PI / 2;
-                        offFloor.position.set(wx, 0.01, wz);
-                        app.scene.add(offFloor);
-
-                        if (cx === 0 && cz === 0) {
-                            createOfficeDesk(wx, wz - 1.2); 
-                        }
-
-                        if (cx === 2 || cz === 2) {
-                            if ((x === Math.floor(mapSize/2) && z === Math.floor(mapSize/2) + 2) || 
-                                (x === Math.floor(mapSize/2) && z === Math.floor(mapSize/2) - 2)) {
-                                createOfficeDoor(wx, wz, cellSize, wallH);
-                            } else {
-                                createWall(wx, wz, wallGeo, matWall);
-                            }
-                        }
-                        continue;
-                    }
-
-                    if (cx > 5 && cz > 5) {
-                        safeMonsterSpawnPoints.push(new THREE.Vector3(wx, 0, wz)); // висота 0 для правильного рівня ніг
-                    }
-
-                    if ((x % 4 === 0 && z % 4 === 0) || (x % 3 === 0 && z % 5 === 0)) {
-                        createWall(wx, wz, wallGeo, matWall);
-                        if (Math.random() > 0.5) createProceduralProp(wx + 1.5, wz + 1.5);
+                    const val = MAP_GRID[r][c];
+                    if(val === 1) {
+                        // Стіна
+                        const wall = new THREE.Mesh(wallGeo, wallMat);
+                        wall.position.set(x, 2, z);
+                        wall.castShadow = true;
+                        wall.receiveShadow = true;
+                        app.scene.add(wall);
+                        
+                        // Додаємо колізію
+                        const box = new THREE.Box3().setFromObject(wall);
+                        app.walls.push(box);
                     } 
-                    else if (cx > 3 && cz > 3 && Math.random() > 0.93 && app.vents.length < 5) {
-                        createVent(wx, wz, cellSize);
-                    } 
-                    else if (Math.random() > 0.95 && genCount < 10) {
-                        createGenerator(wx, wz);
-                        genCount++;
+                    else if(val === 0) {
+                        // Шанс спавну генератора
+                        if(Math.random() < 0.15 && genCount < 10) {
+                            createGeneratorMesh(x, z, genCount);
+                            genCount++;
+                        }
+                        // Шанс спавну вентиляції
+                        else if(Math.random() < 0.08 && app.vents.length < 6) {
+                            createVentMesh(x, z, app.vents.length);
+                        }
+                        // Декоративна лялька
+                        else if(Math.random() < 0.04) {
+                            createSpookyDoll(x, z);
+                        }
                     }
-                    
-                    if (x % 5 === 0 && z % 5 === 0 && Math.random() > 0.4) {
-                        createFlickeringLamp(wx, wallH - 0.2, wz);
+                    else if(val === 3) {
+                        // Офіс / Точка перезарядки ліхтариків
+                        app.officePos.set(x, 0, z);
+                        createOfficeRecharger(x, z);
                     }
                 }
             }
-
-            while(genCount < 10) {
-                const rx = (Math.floor(Math.random() * (mapSize - 4)) + 2 - Math.floor(mapSize/2)) * cellSize;
-                const rz = (Math.floor(Math.random() * (mapSize - 4)) + 2 - Math.floor(mapSize/2)) * cellSize;
-                if (Math.abs(rx) > 15 || Math.abs(rz) > 15) { 
-                    createGenerator(rx, rz);
-                    genCount++;
-                }
-            }
-
-            createVent(0, 0, cellSize);
-
-            if (safeMonsterSpawnPoints.length > 0) {
-                app.monsterSpawnPos = safeMonsterSpawnPoints[Math.floor(Math.random() * safeMonsterSpawnPoints.length)];
-            } else {
-                app.monsterSpawnPos = new THREE.Vector3(40, 0, 40);
-            }
-
-            createSpookyDoll(0, -8);     
-            createSpookyDoll(-20, 15);   
-            createSpookyDoll(20, -15);   
-        }
-
-        function createWall(x, z, geo, mat) {
-            const mesh = new THREE.Mesh(geo, mat);
-            mesh.position.set(x, 2.5, z);
-            mesh.castShadow = true; mesh.receiveShadow = true;
-            app.scene.add(mesh);
-            mesh.geometry.computeBoundingBox();
-            const box = new THREE.Box3().setFromObject(mesh);
-            app.walls.push(box);
-        }
-
-        function createOfficeDesk(x, z) {
-            const group = new THREE.Group();
             
-            const topGeo = new THREE.BoxGeometry(3, 0.1, 1.5);
-            const woodMat = new THREE.MeshPhongMaterial({ color: 0x5a3d28, shininess: 5 });
-            const top = new THREE.Mesh(topGeo, woodMat);
-            top.position.y = 0.85;
-            group.add(top);
-
-            const legGeo = new THREE.CylinderGeometry(0.08, 0.08, 0.85);
-            const metalMat = new THREE.MeshPhongMaterial({ color: 0x222222, shininess: 30 });
-            for(let dx of [-1.3, 1.3]) {
-                for(let dz of [-0.6, 0.6]) {
-                    const leg = new THREE.Mesh(legGeo, metalMat);
-                    leg.position.set(dx, 0.85/2, dz);
-                    group.add(leg);
-                }
+            // Якщо генераторів замало, ставимо гарантовані
+            if(genCount < 5) {
+                createGeneratorMesh(12, 12, genCount++);
+                createGeneratorMesh(54, 12, genCount++);
+                createGeneratorMesh(24, 48, genCount++);
             }
 
-            const boxGeo = new THREE.BoxGeometry(0.6, 0.5, 0.5);
-            const screenMat = new THREE.MeshPhongMaterial({ color: 0x111111, shininess: 50 });
-            const monitor = new THREE.Mesh(boxGeo, screenMat);
-            monitor.position.set(0, 0.85 + 0.25, 0);
-            group.add(monitor);
+            document.getElementById('gen-text').innerText = `ГЕНЕРАТОРИ: 0 / ${genCount}`;
+            app.maxGenerators = genCount;
 
-            const faceGeo = new THREE.PlaneGeometry(0.5, 0.4);
-            const glowMat = new THREE.MeshBasicMaterial({ color: 0x00ff33 });
-            const face = new THREE.Mesh(faceGeo, glowMat);
-            face.position.set(0, 0.85 + 0.25, 0.26);
-            group.add(face);
-
-            const monitorLight = new THREE.PointLight(0x00ff33, 0.6, 3);
-            monitorLight.position.set(0, 0.85 + 0.25, 0.4);
-            group.add(monitorLight);
-
-            group.position.set(x, 0, z);
-            app.scene.add(group);
-
-            const deskCollider = new THREE.Box3().setFromCenterAndSize(
-                new THREE.Vector3(x, 0.5, z),
-                new THREE.Vector3(3.2, 1.0, 1.7)
-            );
-            app.walls.push(deskCollider);
+            // Створення вихідних воріт
+            createExitGate(CELL_SIZE * 1.5, 0, CELL_SIZE * 1.5);
+            createFlickeringLamp(24, 3.9, 24);
+            createFlickeringLamp(42, 3.9, 18);
         }
 
-        function createProceduralProp(x, z) {
-            const chance = Math.random();
-            if (chance < 0.28) {
-                createCrate(x, z); 
-            } else if (chance < 0.55) {
-                createMetalShelf(x, z); 
-            } else if (chance < 0.78) {
-                createSpookyChair(x, z); 
-            } else {
-                const group = new THREE.Group();
-                const boxGeo = new THREE.BoxGeometry(1.6, 2.5, 1.6);
-                const rustyMat = new THREE.MeshPhongMaterial({ color: 0x473939, shininess: 10 });
-                const cabinet = new THREE.Mesh(boxGeo, rustyMat);
-                cabinet.position.y = 1.25;
-                group.add(cabinet);
-
-                group.position.set(x, 0, z);
-                app.scene.add(group);
-
-                const box = new THREE.Box3().setFromObject(cabinet);
-                app.walls.push(box);
-            }
-        }
-
-        function createCrate(x, z) {
+        /**
+         * СТВОРЕННЯ МОДЕЛЕЙ (Survivor / Monster)
+         * ВИПРАВЛЕННЯ 1 ТА 2: Налаштування правильної лицьової сторони моделей
+         */
+        function createSurvivorModel(role) {
             const group = new THREE.Group();
-            const mat = new THREE.MeshPhongMaterial({ color: 0x6e4e37, shininess: 2 });
-            
-            const bottom = new THREE.Mesh(new THREE.BoxGeometry(1.2, 1.2, 1.2), mat);
-            bottom.position.y = 0.6;
-            bottom.rotation.y = Math.random() * 0.15;
-            group.add(bottom);
+            let rColor = 0x0055aa;
+            if(role === 'Medic') rColor = 0x00aa55;
+            if(role === 'Hunter') rColor = 0xaa5500;
+            if(role === 'Engineer') rColor = 0xaaaa00;
 
-            if (Math.random() > 0.4) {
-                const top = new THREE.Mesh(new THREE.BoxGeometry(0.9, 0.9, 0.9), mat);
-                top.position.set(0.1, 1.65, -0.05);
-                top.rotation.y = Math.random() * 0.4 - 0.2;
-                group.add(top);
-            }
+            const mat = new THREE.MeshPhongMaterial({ color: rColor });
+            const headGeo = new THREE.BoxGeometry(0.4, 0.4, 0.4);
+            const bodyGeo = new THREE.BoxGeometry(0.6, 0.9, 0.3);
 
-            group.position.set(x, 0, z);
-            app.scene.add(group);
-
-            const box = new THREE.Box3().setFromCenterAndSize(
-                new THREE.Vector3(x, 1.1, z),
-                new THREE.Vector3(1.3, 2.3, 1.3)
-            );
-            app.walls.push(box);
-        }
-
-        function createMetalShelf(x, z) {
-            const group = new THREE.Group();
-            const metalMat = new THREE.MeshPhongMaterial({ color: 0x1f1f22, shininess: 45 });
-            const woodMat = new THREE.MeshPhongMaterial({ color: 0x3d322b, shininess: 10 });
-
-            const poleGeo = new THREE.CylinderGeometry(0.04, 0.04, 2.3);
-            for(let dx of [-0.65, 0.65]) {
-                for(let dz of [-0.32, 0.32]) {
-                    const pole = new THREE.Mesh(poleGeo, metalMat);
-                    pole.position.set(dx, 1.15, dz);
-                    group.add(pole);
-                }
-            }
-
-            const boardGeo = new THREE.BoxGeometry(1.4, 0.06, 0.65);
-            for(let dy of [0.35, 1.15, 1.95]) {
-                const board = new THREE.Mesh(boardGeo, woodMat);
-                board.position.set(0, dy, 0);
-                group.add(board);
-            }
-
-            group.position.set(x, 0, z);
-            app.scene.add(group);
-
-            const box = new THREE.Box3().setFromCenterAndSize(
-                new THREE.Vector3(x, 1.15, z),
-                new THREE.Vector3(1.5, 2.3, 0.75)
-            );
-            app.walls.push(box);
-        }
-
-        function createSpookyChair(x, z) {
-            const group = new THREE.Group();
-            const chairMat = new THREE.MeshPhongMaterial({ color: 0x242d22, shininess: 12 });
-            const legMat = new THREE.MeshPhongMaterial({ color: 0x0f0f0f, shininess: 5 });
-
-            const seat = new THREE.Mesh(new THREE.BoxGeometry(0.8, 0.08, 0.8), chairMat);
-            seat.position.y = 0.55;
-            group.add(seat);
-
-            const back = new THREE.Mesh(new THREE.BoxGeometry(0.8, 0.6, 0.08), chairMat);
-            back.position.set(0, 0.85, -0.36);
-            group.add(back);
-
-            const legGeo = new THREE.CylinderGeometry(0.035, 0.025, 0.55);
-            for(let dx of [-0.33, 0.33]) {
-                for(let dz of [-0.33, 0.33]) {
-                    const leg = new THREE.Mesh(legGeo, legMat);
-                    leg.position.set(dx, 0.55/2, dz);
-                    leg.rotation.z = dx * 0.12;
-                    group.add(leg);
-                }
-            }
-
-            group.position.set(x, 0, z);
-            group.rotation.y = Math.random() * Math.PI * 2;
-            app.scene.add(group);
-
-            const box = new THREE.Box3().setFromCenterAndSize(
-                new THREE.Vector3(x, 0.6, z),
-                new THREE.Vector3(1.0, 1.3, 1.0)
-            );
-            app.walls.push(box);
-        }
-
-        function createSpookyDoll(x, z) {
-            const group = new THREE.Group();
-            
-            const body = new THREE.Mesh(
-                new THREE.ConeGeometry(0.2, 0.5, 8), 
-                new THREE.MeshPhongMaterial({ color: 0x421a59, shininess: 5 })
-            );
-            body.position.y = 0.25;
+            const body = new THREE.Mesh(bodyGeo, mat);
+            body.position.y = 0.95;
             group.add(body);
-            
-            const head = new THREE.Mesh(
-                new THREE.SphereGeometry(0.14, 12, 12), 
-                new THREE.MeshPhongMaterial({ color: 0xeeeeee, shininess: 25 })
-            );
-            head.position.y = 0.57;
+
+            const head = new THREE.Mesh(headGeo, new THREE.MeshPhongMaterial({ color: 0xffcc99 }));
+            head.position.y = 1.6;
             group.add(head);
-            
-            const eyeMat = new THREE.MeshBasicMaterial({ color: 0xff0000 });
-            const eyeL = new THREE.Mesh(new THREE.SphereGeometry(0.02, 6, 6), eyeMat);
-            eyeL.position.set(-0.045, 0.59, 0.12);
+
+            // Очі направлені вперед (+Z)
+            const eyeMat = new THREE.MeshBasicMaterial({ color: 0xffffff });
+            const eyeL = new THREE.Mesh(new THREE.BoxGeometry(0.08,0.08,0.05), eyeMat);
+            eyeL.position.set(-0.1, 1.65, 0.21);
             group.add(eyeL);
-            const eyeR = new THREE.Mesh(new THREE.SphereGeometry(0.02, 6, 6), eyeMat);
-            eyeR.position.set(0.045, 0.59, 0.12);
+            const eyeR = eyeL.clone();
+            eyeR.position.x = 0.1;
             group.add(eyeR);
 
-            const hair = new THREE.Mesh(
-                new THREE.BoxGeometry(0.2, 0.08, 0.2), 
-                new THREE.MeshPhongMaterial({ color: 0x111111 })
-            );
-            hair.position.set(0, 0.69, 0);
-            group.add(hair);
+            // Ноги для анімації руху
+            const legGeo = new THREE.BoxGeometry(0.2, 0.5, 0.2);
+            const thighL = new THREE.Mesh(legGeo, mat);
+            thighL.name = "thighL";
+            thighL.position.set(-0.15, 0.25, 0);
+            group.add(thighL);
 
-            group.position.set(x, 0, z);
-            app.scene.add(group);
+            const thighR = new THREE.Mesh(legGeo, mat);
+            thighR.name = "thighR";
+            thighR.position.set(0.15, 0.25, 0);
+            group.add(thighR);
 
-            app.spookyDolls.push({ x: x, z: z, laughCooldown: 0 });
-
-            const box = new THREE.Box3().setFromCenterAndSize(
-                new THREE.Vector3(x, 0.4, z),
-                new THREE.Vector3(0.5, 0.8, 0.5)
-            );
-            app.walls.push(box);
+            return group;
         }
 
-        function createOfficeDoor(x, z, size, h) {
-            const mesh = new THREE.Mesh(
-                new THREE.BoxGeometry(size * 0.9, h, size * 0.25), 
-                new THREE.MeshPhongMaterial({ color: 0x1c1c1f, shininess: 40 })
-            );
-            mesh.position.set(x, h/2, z);
-            mesh.castShadow = true;
-            app.scene.add(mesh);
-
-            mesh.position.y = h + h/2; 
-
-            const doorBox = new THREE.Box3();
-            app.officeDoors.push({ mesh: mesh, box: doorBox, baseX: x, baseZ: z, height: h, state: 0 });
-        }
-
-        function createGenerator(x, z) {
+        function createMonsterModel() {
             const group = new THREE.Group();
-            
-            const base = new THREE.Mesh(new THREE.BoxGeometry(2, 2.2, 2), new THREE.MeshPhongMaterial({ color: 0x3d3d3d, shininess: 10 }));
-            base.position.y = 1.1;
-            base.castShadow = true;
-            group.add(base);
+            const mat = new THREE.MeshPhongMaterial({ color: 0x4a1111, roughness: 0.7 });
+            const metalMat = new THREE.MeshStandardMaterial({ metalness: 0.8, roughness: 0.2, color: 0x555555 });
 
-            const led = new THREE.Mesh(new THREE.SphereGeometry(0.25, 16, 16), new THREE.MeshBasicMaterial({ color: 0xff0000 }));
-            led.position.y = 2.35;
-            group.add(led);
+            // Торс Фредді / Бонні
+            const body = new THREE.Mesh(new THREE.CylinderGeometry(0.4, 0.5, 1.2, 10), mat);
+            body.position.y = 1.6;
+            group.add(body);
 
-            const light = new THREE.PointLight(0xff0000, 1.8, 12);
-            light.position.y = 2.4;
-            group.add(light);
+            // Голова
+            const head = new THREE.Mesh(new THREE.BoxGeometry(0.6, 0.6, 0.6), mat);
+            head.position.y = 2.6;
+            group.add(head);
 
-            group.position.set(x, 0, z);
-            app.scene.add(group);
-            
-            const box = new THREE.Box3().setFromCenterAndSize(new THREE.Vector3(x, 1.1, z), new THREE.Vector3(2.5, 2.5, 2.5));
-            app.walls.push(box); 
+            /* ВИПРАВЛЕННЯ 2: Очі монстра дивляться чітко вперед по вісі Z (+0.31) */
+            const eyeMat = new THREE.MeshBasicMaterial({ color: 0xff0000 });
+            const eyeL = new THREE.Mesh(new THREE.SphereGeometry(0.08, 8, 8), eyeMat);
+            eyeL.position.set(-0.15, 2.7, 0.31);
+            group.add(eyeL);
+            const eyeR = eyeL.clone();
+            eyeR.position.x = 0.15;
+            group.add(eyeR);
 
-            app.generators.push({ group: group, lightMesh: led, pointLight: light, fixProgress: 0, fixed: false, x: x, z: z });
+            // Вуха аніматроніка
+            const earL = new THREE.Mesh(new THREE.BoxGeometry(0.12, 0.3, 0.1), mat);
+            earL.position.set(-0.25, 3.0, 0);
+            group.add(earL);
+            const earR = earL.clone();
+            earR.position.x = 0.25;
+            group.add(earR);
+
+            // Металеві ноги ендоскелету
+            const legGeo = new THREE.CylinderGeometry(0.08, 0.06, 0.8, 8);
+            const thighL = new THREE.Mesh(legGeo, metalMat);
+            thighL.name = "thighL";
+            thighL.position.set(-0.22, 0.5, 0);
+            group.add(thighL);
+
+            const thighR = new THREE.Mesh(legGeo, metalMat);
+            thighR.name = "thighR";
+            thighR.position.set(0.22, 0.5, 0);
+            group.add(thighR);
+
+            return group;
         }
 
-        function createVent(x, z, size) {
-            const mesh = new THREE.Mesh(
-                new THREE.BoxGeometry(size * 0.7, 0.05, size * 0.7), 
-                new THREE.MeshPhongMaterial({ color: 0x111111, shininess: 15, wireframe: true })
-            );
-            mesh.position.set(x, 0.025, z);
-            app.scene.add(mesh);
-            app.vents.push({ x: x, z: z, mesh: mesh });
-        }
-
-        function createExitGate(x, z, size, h) {
-            const mesh = new THREE.Mesh(
-                new THREE.BoxGeometry(size * 3.5, h, size * 0.8), 
-                new THREE.MeshPhongMaterial({ color: 0x5a0000, shininess: 20 })
-            );
-            mesh.position.set(x, h/2, z);
-            app.scene.add(mesh);
-            
-            mesh.geometry.computeBoundingBox();
-            const box = new THREE.Box3().setFromObject(mesh);
-            app.walls.push(box);
-            
-            app.exitGate = { mesh: mesh, boxObj: box, opened: false };
-        }
-
-        function createFlickeringLamp(x, y, z) {
-            const lampGroup = new THREE.Group();
-            
-            const casing = new THREE.Mesh(new THREE.BoxGeometry(1.5, 0.15, 0.4), new THREE.MeshPhongMaterial({ color: 0x222222, shininess: 5 }));
-            casing.position.set(0, 0, 0);
-            lampGroup.add(casing);
-
-            const bulb = new THREE.Mesh(new THREE.BoxGeometry(1.3, 0.05, 0.2), new THREE.MeshBasicMaterial({ color: 0xfff6e0 }));
-            bulb.position.set(0, -0.09, 0);
-            lampGroup.add(bulb);
-
-            const light = new THREE.PointLight(0xfff5ea, 1.2, 14);
-            light.position.set(0, -0.2, 0);
-            lampGroup.add(light); 
-
-            lampGroup.position.set(x, y, z);
-            app.scene.add(lampGroup);
-
-            app.flickeringLamps.push({ group: lampGroup, light: light, bulbMat: bulb.material });
-        }
-
-        // ФУНКЦІЯ СТВОРЕННЯ ТЕКСТОВОГО НІКНЕЙМУ В 3D
         function createNameTag(name) {
             const canvas = document.createElement('canvas');
-            canvas.width = 512;
-            canvas.height = 128;
+            canvas.width = 256; canvas.height = 64;
             const ctx = canvas.getContext('2d');
-            
-            ctx.fillStyle = 'rgba(0, 0, 0, 0.65)';
-            if (ctx.roundRect) ctx.roundRect(10, 10, 492, 108, 15); else ctx.fillRect(10, 10, 492, 108);
-            ctx.fill();
-            
-            ctx.strokeStyle = '#ff3333';
-            ctx.lineWidth = 4;
-            ctx.stroke();
-
-            ctx.font = 'Bold 30px Courier New';
+            ctx.fillStyle = 'rgba(0, 0, 0, 0.6)';
+            ctx.fillRect(0, 0, 256, 64);
+            ctx.font = 'bold 20px Courier New';
             ctx.fillStyle = '#ffffff';
             ctx.textAlign = 'center';
-            ctx.textBaseline = 'middle';
-            ctx.fillText(name, 256, 64);
-            
-            const texture = new THREE.CanvasTexture(canvas);
-            const material = new THREE.SpriteMaterial({ map: texture, depthTest: true });
-            const sprite = new THREE.Sprite(material);
-            sprite.scale.set(3.2, 0.8, 1);
+            ctx.fillText(name, 128, 40);
+
+            const tex = new THREE.CanvasTexture(canvas);
+            const mat = new THREE.SpriteMaterial({ map: tex, transparent: true });
+            const sprite = new THREE.Sprite(mat);
+            sprite.scale.set(2, 0.5, 1);
             return sprite;
         }
 
+        /* ВИПРАВЛЕННЯ 1: Створення та додавання віддалених гравців у сцену */
         function createRemotePlayer(id, role) {
-            const isMonster = role === 'Animatronic';
-            let mainGroup = new THREE.Group(); 
-            
-            if(isMonster) {
-                const group = new THREE.Group();
-                const mat = new THREE.MeshPhongMaterial({ color: 0x880000, shininess: 25 }); 
-                const metalMat = new THREE.MeshPhongMaterial({ color: 0x1f1f1f, shininess: 80 }); 
-
-                const pelvis = new THREE.Mesh(new THREE.BoxGeometry(0.8, 0.15, 0.5), metalMat);
-                pelvis.position.y = 1.0;
-                group.add(pelvis);
-
-                const spine = new THREE.Mesh(new THREE.CylinderGeometry(0.12, 0.12, 0.5), metalMat);
-                spine.position.set(0, 1.25, 0);
-                group.add(spine);
-
-                const chest = new THREE.Mesh(new THREE.CylinderGeometry(0.55, 0.45, 1.0, 8), mat);
-                chest.position.y = 1.8;
-                chest.castShadow = true;
-                group.add(chest);
-
-                const head = new THREE.Mesh(new THREE.BoxGeometry(0.8, 0.8, 0.8), mat);
-                head.position.y = 2.6;
-                group.add(head);
-
-                const jaw = new THREE.Mesh(new THREE.BoxGeometry(0.7, 0.2, 0.5), mat);
-                jaw.position.set(0, 2.15, 0.15);
-                group.add(jaw);
-
-                const teethMat = new THREE.MeshBasicMaterial({ color: 0xdddddd });
-                for (let dx of [-0.2, 0, 0.2]) {
-                    const tooth = new THREE.Mesh(new THREE.ConeGeometry(0.04, 0.1, 4), teethMat);
-                    tooth.position.set(dx, 2.25, 0.35);
-                    tooth.rotation.x = Math.PI;
-                    group.add(tooth);
-                }
-
-                const eyeMat = new THREE.MeshBasicMaterial({ color: 0xff0000 });
-                const eyeL = new THREE.Mesh(new THREE.SphereGeometry(0.08, 8, 8), eyeMat);
-                eyeL.position.set(-0.2, 2.7, 0.38);
-                group.add(eyeL);
-                const eyeR = new THREE.Mesh(new THREE.SphereGeometry(0.08, 8, 8), eyeMat);
-                eyeR.position.set(0.2, 2.7, 0.38);
-                group.add(eyeR);
-
-                const earL = new THREE.Mesh(new THREE.BoxGeometry(0.15, 0.4, 0.1), mat);
-                earL.position.set(-0.45, 3.1, 0);
-                earL.rotation.z = Math.PI/8;
-                group.add(earL);
-                const earR = new THREE.Mesh(new THREE.BoxGeometry(0.15, 0.4, 0.1), mat);
-                earR.position.set(0.45, 3.1, 0);
-                earR.rotation.z = -Math.PI/8;
-                group.add(earR);
-
-                const thighL = new THREE.Mesh(new THREE.CylinderGeometry(0.09, 0.07, 0.5), metalMat);
-                thighL.position.set(-0.28, 0.75, 0);
-                group.add(thighL);
-                const shinL = new THREE.Mesh(new THREE.CylinderGeometry(0.07, 0.05, 0.5), metalMat);
-                shinL.position.set(-0.28, 0.25, 0);
-                group.add(shinL);
-                const footL = new THREE.Mesh(new THREE.BoxGeometry(0.22, 0.1, 0.35), mat);
-                footL.position.set(-0.28, 0.05, 0.08);
-                group.add(footL);
-
-                const thighR = new THREE.Mesh(new THREE.CylinderGeometry(0.09, 0.07, 0.5), metalMat);
-                thighR.position.set(0.28, 0.75, 0);
-                group.add(thighR);
-                const shinR = new THREE.Mesh(new THREE.CylinderGeometry(0.07, 0.05, 0.5), metalMat);
-                shinR.position.set(0.28, 0.25, 0);
-                group.add(shinR);
-                const footR = new THREE.Mesh(new THREE.BoxGeometry(0.22, 0.1, 0.35), mat);
-                footR.position.set(0.28, 0.05, 0.08);
-                group.add(footR);
-
-                const shoulderL = new THREE.Mesh(new THREE.SphereGeometry(0.11, 8, 8), metalMat);
-                shoulderL.position.set(-0.65, 2.1, 0);
-                group.add(shoulderL);
-                const upperArmL = new THREE.Mesh(new THREE.CylinderGeometry(0.07, 0.06, 0.5), metalMat);
-                upperArmL.position.set(-0.7, 1.8, 0);
-                upperArmL.rotation.z = Math.PI/12;
-                group.add(upperArmL);
-                const forearmL = new THREE.Mesh(new THREE.CylinderGeometry(0.06, 0.05, 0.5), metalMat);
-                forearmL.position.set(-0.75, 1.3, 0.1);
-                forearmL.rotation.x = -Math.PI/6;
-                group.add(forearmL);
-                const clawL = new THREE.Mesh(new THREE.ConeGeometry(0.05, 0.2, 4), metalMat);
-                clawL.position.set(-0.75, 1.05, 0.22);
-                clawL.rotation.x = -Math.PI/4;
-                group.add(clawL);
-
-                const shoulderR = new THREE.Mesh(new THREE.SphereGeometry(0.11, 8, 8), metalMat);
-                shoulderR.position.set(0.65, 2.1, 0);
-                group.add(shoulderR);
-                const upperArmR = new THREE.Mesh(new THREE.CylinderGeometry(0.07, 0.06, 0.5), metalMat);
-                upperArmR.position.set(0.7, 1.8, 0);
-                upperArmR.rotation.z = -Math.PI/12;
-                group.add(upperArmR);
-                const forearmR = new THREE.Mesh(new THREE.CylinderGeometry(0.06, 0.05, 0.5), metalMat);
-                forearmR.position.set(0.75, 1.3, 0.1);
-                forearmR.rotation.x = -Math.PI/6;
-                group.add(forearmR);
-                const clawR = new THREE.Mesh(new THREE.ConeGeometry(0.05, 0.2, 4), metalMat);
-                clawR.position.set(0.75, 1.05, 0.22);
-                clawR.rotation.x = -Math.PI/4;
-                group.add(clawR);
-
-                mainGroup.add(group);
-                mainGroup.thighL = thighL;
-                mainGroup.thighR = thighR;
-                mainGroup.upperArmL = upperArmL;
-                mainGroup.upperArmR = upperArmR;
-
-                const eyeLight = new THREE.PointLight(0xff0000, 1.5, 8);
-                eyeLight.position.set(0, 2.6, 0.6);
-                mainGroup.add(eyeLight);
-            } else {
-                const geo = new THREE.CapsuleGeometry(0.42, 0.85, 4, 8);
-                // Яскравий неоновий колір для кращої видимості у темряві
-                const mat = new THREE.MeshPhongMaterial({ color: 0x00ff66, shininess: 40 });
-                const mesh = new THREE.Mesh(geo, mat);
-                mesh.position.y = 0.85; 
-                mainGroup.add(mesh);
+            if (app.remotePlayers[id] && app.remotePlayers[id].mesh) {
+                app.scene.remove(app.remotePlayers[id].mesh);
             }
-
-            // Додаємо табличку з ніком над головою
-            let pName = "Гравець";
-            if (id === 'bot') {
-                pName = "Аніматронік (Бот)";
-            } else {
-                const found = app.playersList.find(p => p.id === id);
-                if (found) pName = found.name;
-            }
-            let rLabel = role === 'Animatronic' ? 'Монстр' : (role === 'Engineer' ? 'Інженер' : (role === 'Hunter' ? 'Мисливець' : 'Медик'));
-            const nameTag = createNameTag(`${pName} [${rLabel}]`);
-            nameTag.position.y = isMonster ? 3.6 : 1.9;
-            mainGroup.add(nameTag);
-
-            const initialPos = (app.remotePlayers[id] && app.remotePlayers[id].targetPos) 
-                ? app.remotePlayers[id].targetPos.clone() 
-                : (isMonster && app.monsterSpawnPos ? app.monsterSpawnPos.clone() : new THREE.Vector3(0, 0, 0));
             
+            const mainGroup = new THREE.Group();
+            const isMonster = (role === 'Animatronic');
+            
+            let visualModel = isMonster ? createMonsterModel() : createSurvivorModel(role);
+            mainGroup.add(visualModel);
+            
+            const rLabel = isMonster ? 'Монстр' : (role === 'Engineer' ? 'Інженер' : (role === 'Hunter' ? 'Мисливець' : 'Медик'));
+            const pName = (id === 'bot' || id === 'bot_guest') ? 'AI Бот' : `Гравець [${id}]`;
+            const tag = createNameTag(`${pName} (${rLabel})`);
+            tag.position.y = isMonster ? 3.3 : 2.1;
+            mainGroup.add(tag);
+            
+            let initialPos = isMonster ? app.monsterSpawnPos.clone() : new THREE.Vector3(6, 0, 6);
             mainGroup.position.copy(initialPos);
             app.scene.add(mainGroup);
             
-            app.remotePlayers[id] = { mesh: mainGroup, targetPos: initialPos, targetRot: 0, isHidden: false, role: role };
+            app.remotePlayers[id] = {
+                mesh: mainGroup,
+                targetPos: initialPos.clone(),
+                targetRot: 0,
+                isHidden: false,
+                role: role
+            };
         }
 
-        function sampleBotMonster() {} // затичка
-
         function spawnBotMonster() {
-            let botSpeed = 5.0; 
-            let spawnPos = app.monsterSpawnPos ? app.monsterSpawnPos.clone() : new THREE.Vector3(40, 0, 40);
-
-            if (app.mode === 'single') {
-                if (app.difficulty === 1) botSpeed = 4.0;
-                else if (app.difficulty === 2) botSpeed = 5.5;
-                else if (app.difficulty === 3) botSpeed = 7.0;
-                else if (app.difficulty === 4) {
-                    botSpeed = 8.5; 
-                    spawnPos = new THREE.Vector3(15, 0, 15); 
-                }
-            }
-
-            app.remotePlayers['bot'] = {
-                mesh: null, role: 'Animatronic', isHidden: false,
-                targetPos: spawnPos.clone(), targetRot: 0
-            };
-            
+            app.remotePlayers['bot'] = { mesh: null, role: 'Animatronic', isHidden: false, targetPos: app.monsterSpawnPos.clone(), targetRot: 0 };
             createRemotePlayer('bot', 'Animatronic');
-            app.monster.speed = botSpeed;
+            app.monster.speed = 4.0 + (app.difficulty * 1.0);
             app.monster.state = 'hunting';
         }
 
-        function setupInputs() {
-            if (app.isMobile) {
-                document.getElementById('touch-ui').style.display = 'block';
-                document.getElementById('crosshair').style.display = 'none';
-                setupTouch();
-            } else {
-                document.getElementById('touch-ui').style.display = 'none';
-                document.getElementById('crosshair').style.display = 'block';
-                
-                const canvas = app.renderer.domElement;
-                canvas.setAttribute('tabindex', '0'); 
-                
-                canvas.addEventListener('click', () => { 
-                    canvas.focus(); 
-                    if(app.player.hp > 0) canvas.requestPointerLock(); 
-                });
+        // Об'єкти на карті
+        function createGeneratorMesh(x, z, idx) {
+            const geo = new THREE.BoxGeometry(1.6, 2, 1.2);
+            const mat = new THREE.MeshPhongMaterial({ color: 0x334433 });
+            const m = new THREE.Mesh(geo, mat);
+            m.position.set(x, 1, z);
+            app.scene.add(m);
 
-                document.addEventListener('mousemove', (e) => {
-                    if (document.pointerLockElement === canvas && app.player.hp > 0) {
-                        app.camera.rotation.y -= e.movementX * 0.0022;
-                        app.camera.rotation.x -= e.movementY * 0.0022;
-                        app.camera.rotation.x = Math.max(-Math.PI/2.1, Math.min(Math.PI/2.1, app.camera.rotation.x));
-                    }
-                });
+            const redLight = new THREE.PointLight(0xff0000, 0.8, 4);
+            redLight.position.set(x, 1.8, z);
+            app.scene.add(redLight);
 
-                document.addEventListener('keydown', e => handleKey(e.code, true));
-                document.addEventListener('keyup', e => handleKey(e.code, false));
-            }
+            app.generators.push({ x: x, z: z, mesh: m, light: redLight, fixed: false, fixProgress: 0, index: idx });
+            app.walls.push(new THREE.Box3().setFromObject(m));
         }
 
-        function setupTouch() {
-            const touchLeft = document.getElementById('touch-left');
-            const joyStick = document.getElementById('joy-stick');
-            
-            touchLeft.addEventListener('touchstart', (e) => {
-                e.preventDefault();
-                app.touch.joyActive = true;
-                const touch = e.changedTouches[0];
-                app.touch.origin = { x: touch.clientX, y: touch.clientY };
-                joyStick.style.transform = `translate(0px, 0px)`;
-            }, {passive: false});
+        function createVentMesh(x, z, idx) {
+            const geo = new THREE.BoxGeometry(1.4, 0.1, 1.4);
+            const mat = new THREE.MeshPhongMaterial({ color: 0x222222 });
+            const m = new THREE.Mesh(geo, mat);
+            m.position.set(x, 0.05, z);
+            app.scene.add(m);
 
-            touchLeft.addEventListener('touchmove', (e) => {
-                e.preventDefault();
-                if (!app.touch.joyActive) return;
-                const touch = e.changedTouches[0];
-                let dx = touch.clientX - app.touch.origin.x;
-                let dy = touch.clientY - app.touch.origin.y;
-                
-                const maxDist = 40;
-                const dist = Math.hypot(dx, dy);
-                if (dist > maxDist) {
-                    dx = (dx / dist) * maxDist;
-                    dy = (dy / dist) * maxDist;
-                }
-                
-                joyStick.style.transform = `translate(${dx}px, ${dy}px)`;
-                app.touch.delta.x = dx / maxDist;
-                app.touch.delta.y = dy / maxDist;
-            }, {passive: false});
-
-            touchLeft.addEventListener('touchend', (e) => {
-                e.preventDefault();
-                app.touch.joyActive = false;
-                app.touch.delta = {x: 0, y: 0};
-                joyStick.style.transform = `translate(0px, 0px)`;
-            });
-
-            document.addEventListener('touchstart', (e) => {
-                if (e.target.closest('#touch-left') || e.target.closest('#touch-actions')) return;
-                const touch = e.changedTouches[0];
-                if (app.touch.lookId === null) {
-                    app.touch.lookId = touch.identifier;
-                    app.touch.lastLook = { x: touch.clientX, y: touch.clientY };
-                }
-            }, {passive: false});
-
-            document.addEventListener('touchmove', (e) => {
-                for (let i = 0; i < e.changedTouches.length; i++) {
-                    const touch = e.changedTouches[i];
-                    if (touch.identifier === app.touch.lookId && app.player.hp > 0) {
-                        app.camera.rotation.y -= (touch.clientX - app.touch.lastLook.x) * 0.005;
-                        app.camera.rotation.x -= (touch.clientY - app.touch.lastLook.y) * 0.005;
-                        app.camera.rotation.x = Math.max(-Math.PI/2.1, Math.min(Math.PI/2.1, app.camera.rotation.x));
-                        app.touch.lastLook = { x: touch.clientX, y: touch.clientY };
-                    }
-                }
-            }, {passive: false});
-
-            document.addEventListener('touchend', (e) => {
-                for (let i = 0; i < e.changedTouches.length; i++) {
-                    if (e.changedTouches[i].identifier === app.touch.lookId) {
-                        app.touch.lookId = null;
-                    }
-                }
-            });
-
-            document.getElementById('btn-t-action').addEventListener('touchstart', (e) => {
-                e.preventDefault();
-                performAction();
-            });
-
-            document.getElementById('btn-t-jump').addEventListener('touchstart', (e) => {
-                e.preventDefault();
-                if (app.player.isGrounded && app.player.stamina > 20) {
-                    app.player.yVelocity = app.player.jumpForce;
-                    app.player.isGrounded = false;
-                    app.player.stamina -= 22;
-                }
-            });
-
-            const btnSprint = document.getElementById('btn-t-sprint');
-            btnSprint.addEventListener('touchstart', (e) => {
-                e.preventDefault();
-                app.keys.shift = true;
-                btnSprint.style.background = "rgba(0,150,255,0.8)";
-            });
-            btnSprint.addEventListener('touchend', (e) => {
-                e.preventDefault();
-                app.keys.shift = false;
-                btnSprint.style.background = "rgba(0,50,150,0.8)";
-            });
+            app.vents.push({ x: x, z: z, mesh: m, index: idx });
         }
 
-        function handleKey(code, isDown) {
-            if(app.player.hp <= 0) return;
-            if (code === 'KeyW' || code === 'ArrowUp') app.keys.w = isDown;
-            if (code === 'KeyS' || code === 'ArrowDown') app.keys.s = isDown;
-            if (code === 'KeyA' || code === 'ArrowLeft') app.keys.a = isDown;
-            if (code === 'KeyD' || code === 'ArrowRight') app.keys.d = isDown;
-            if (code === 'ShiftLeft' || code === 'ShiftRight') app.keys.shift = isDown;
-            
-            if (code === 'Space' && isDown && app.player.isGrounded && app.player.stamina > 20) {
-                app.player.yVelocity = app.player.jumpForce;
-                app.player.isGrounded = false;
-                app.player.stamina -= 22;
-            }
-
-            if (code === 'KeyE' && isDown && !app.keys.e_pressed) {
-                app.keys.e_pressed = true;
-                performAction();
-            }
-            if (code === 'KeyE' && !isDown) app.keys.e_pressed = false;
-            
-            if (code === 'KeyR' && isDown) {
-                app.camera.position.set(0, app.player.height, 3.5); 
-                showAlert("Позицію скинуто!");
-            }
+        function createOfficeRecharger(x, z) {
+            const geo = new THREE.CylinderGeometry(0.8, 0.8, 3, 12);
+            const mat = new THREE.MeshPhongMaterial({ color: 0x224466, emissive: 0x001133 });
+            const m = new THREE.Mesh(geo, mat);
+            m.position.set(x, 1.5, z);
+            app.scene.add(m);
+            app.walls.push(new THREE.Box3().setFromObject(m));
         }
 
-        function performAction() {
-            if(app.player.isHidden) {
-                sfx.playClick();
-                app.player.currentVentIdx = (app.player.currentVentIdx + 1) % app.vents.length;
-                const nextVent = app.vents[app.player.currentVentIdx];
-                app.camera.position.set(nextVent.x, -5, nextVent.z); 
-                showAlert(`Переміщення вентиляцією...`);
+        function createSpookyDoll(x, z) {
+            const m = new THREE.Mesh(new THREE.SphereGeometry(0.25, 8, 8), new THREE.MeshPhongMaterial({ color: 0xaa8888 }));
+            m.position.set(x, 0.25, z);
+            app.scene.add(m);
+            app.spookyDolls.push(m);
+        }
+
+        function createExitGate(x, y, z) {
+            const m = new THREE.Mesh(new THREE.BoxGeometry(4, 4, 0.5), new THREE.MeshPhongMaterial({ color: 0x5a0000 }));
+            m.position.set(x, 2, z);
+            app.scene.add(m);
+            app.exitGate = { mesh: m, boxObj: new THREE.Box3().setFromObject(m), opened: false, x: x, z: z };
+            app.walls.push(app.exitGate.boxObj);
+        }
+
+        function createFlickeringLamp(x, y, z) {
+            const light = new THREE.PointLight(0xfff5ea, 1.5, 15);
+            light.position.set(x, y - 0.3, z);
+            app.scene.add(light);
+            app.flickeringLamps.push({ light: light, timer: 0 });
+        }
+
+        /**
+         * ІГРОВА ЛОГІКА ТА ОНОВЛЕННЯ КАДРІВ (Game Loop)
+         */
+        function animate() {
+            const dt = Math.min(app.clock.getDelta(), 0.1);
+
+            if(app.jumpscareActive) {
+                if(Math.random() < 0.5) document.getElementById('jumpscare-screen').classList.toggle('shaking');
                 return;
             }
+
+            // Зменшення кулдаунів та ефектів прибиття шокером
+            if (app.player.cooldown > 0) app.player.cooldown -= dt;
+            if (app.player.stunnedTimer > 0) app.player.stunnedTimer -= dt;
+
+            // Локальний рух гравця
+            if(app.player.stunnedTimer <= 0) {
+                handleLocalPlayerMovement(dt);
+            }
+
+            // Робота штучного інтелекту Бота-Монстра (тільки на Хості або синглплеєрі)
+            if(app.mode === 'single' || app.mode === 'host') {
+                handleMonsterAI(dt);
+            }
+
+            // Синхронізація віддалених моделей
+            /* ВИПРАВЛЕННЯ 1 ТА 2: Плавна інтерполяція та правильний розворот */
+            for (let id in app.remotePlayers) {
+                let rp = app.remotePlayers[id];
+                if (rp.mesh) {
+                    rp.mesh.position.lerp(rp.targetPos, 0.25);
+                    rp.mesh.rotation.y = rp.targetRot;
+                    rp.mesh.visible = !rp.isHidden;
+                    
+                    // Легка анімація кроків ніг під час руху
+                    if (rp.targetPos.distanceTo(rp.mesh.position) > 0.05) {
+                        let t = app.clock.getElapsedTime() * 12;
+                        let tl = rp.mesh.getObjectByName("thighL");
+                        let tr = rp.mesh.getObjectByName("thighR");
+                        if(tl && tr) {
+                            tl.rotation.x = Math.sin(t) * 0.5;
+                            tr.rotation.x = -Math.sin(t) * 0.5;
+                        }
+                    }
+                }
+            }
+
+            // Ефекти миготіння світла ламп
+            app.flickeringLamps.forEach(lamp => {
+                lamp.timer -= dt;
+                if(lamp.timer <= 0) {
+                    lamp.light.intensity = Math.random() < 0.08 ? 0.1 : 1.5;
+                    if(Math.random() < 0.02) sfx.playFlicker();
+                    lamp.timer = Math.random() * 0.4;
+                }
+            });
+
+            // Перевірка пасивних звуків ляльок біля гравця
+            if(Math.random() < 0.005) {
+                app.spookyDolls.forEach(doll => {
+                    if(app.camera.position.distanceTo(doll.position) < 5) sfx.playSpookyLaugh();
+                });
+            }
+
+            // Оновлення HUD інтерфейсу
+            updateHUD(dt);
+
+            // Мережева трансляція стану кожні 0.05 сек
+            if(Math.random() < 0.3) broadcastState();
+
+            app.renderer.render(app.scene, app.camera);
+        }
+
+        function handleLocalPlayerMovement(dt) {
+            let moveSpeed = app.player.speed;
+            
+            // Спринт та енергія
+            if (app.keys.shift && app.player.stamina > 5 && (app.keys.w || app.keys.a || app.keys.s || app.keys.d)) {
+                moveSpeed *= 1.6;
+                app.player.stamina -= dt * 25;
+            } else {
+                app.player.stamina = Math.min(100, app.player.stamina + dt * 12);
+            }
+
+            // Батарея ліхтарика
+            if(app.player.role !== 'Animatronic') {
+                if(app.player.battery > 0) {
+                    app.player.battery -= dt * 0.4;
+                    let fl = app.camera.getObjectByName("local_flashlight");
+                    if(fl) fl.intensity = app.player.battery < 10 ? Math.random() * 0.5 : 2.5;
+                } else {
+                    let fl = app.camera.getObjectByName("local_flashlight");
+                    if(fl) fl.intensity = 0;
+                }
+
+                // Перевірка знаходження в Офісі зарядки
+                if(app.camera.position.distanceTo(app.officePos) < 4.0) {
+                    app.player.battery = Math.min(60, app.player.battery + dt * 20);
+                    document.getElementById('recharge-icon').style.display = 'block';
+                } else {
+                    document.getElementById('recharge-icon').style.display = 'none';
+                }
+            }
+
+            // Обчислення векторів руху клавіатури або тачпада
+            let forward = new THREE.Vector3(0,0,-1).applyQuaternion(app.camera.quaternion);
+            let side = new THREE.Vector3(1,0,0).applyQuaternion(app.camera.quaternion);
+            forward.y = 0; side.y = 0;
+            forward.normalize(); side.normalize();
+
+            let targetVel = new THREE.Vector3();
+            if (app.keys.w) targetVel.addScaledVector(forward, moveSpeed);
+            if (app.keys.s) targetVel.addScaledVector(forward, -moveSpeed);
+            if (app.keys.a) targetVel.addScaledVector(side, -moveSpeed);
+            if (app.keys.d) targetVel.addScaledVector(side, moveSpeed);
+
+            // Мобільний джойстик
+            if(app.touch.joyActive) {
+                targetVel.addScaledVector(forward, -app.touch.delta.y * moveSpeed);
+                targetVel.addScaledVector(side, app.touch.delta.x * moveSpeed);
+            }
+
+            // Сила тяжіння (Гравітація) та Стрибки
+            if(!app.player.isGrounded) {
+                app.player.yVelocity -= dt * 22;
+            }
+            app.camera.position.y += app.player.yVelocity * dt;
+
+            if(app.camera.position.y <= app.player.height) {
+                app.camera.position.y = app.player.height;
+                app.player.yVelocity = 0;
+                app.player.isGrounded = true;
+            }
+
+            // Накладання фізичних стін (Колізії)
+            let oldX = app.camera.position.x;
+            app.camera.position.x += targetVel.x * dt;
+            if(checkWallCollision()) app.camera.position.x = oldX;
+
+            let oldZ = app.camera.position.z;
+            app.camera.position.z += targetVel.z * dt;
+            if(checkWallCollision()) app.camera.position.z = oldZ;
+
+            // Відтворення кроків
+            if(targetVel.lengthSq() > 0.1 && app.player.isGrounded) {
+                app.player.stepTimer -= dt;
+                if(app.player.stepTimer <= 0) {
+                    sfx.playStep(app.player.role === 'Animatronic');
+                    app.player.stepTimer = app.keys.shift ? 0.28 : 0.45;
+                }
+            }
+
+            // Перевірка близької смерті локального вижившого від AI бота
+            if(app.player.role !== 'Animatronic' && app.remotePlayers['bot']) {
+                let botPos = app.remotePlayers['bot'].targetPos;
+                if(app.camera.position.distanceTo(botPos) < 1.8) {
+                    executeJumpscare();
+                }
+            }
+        }
+
+        function checkWallCollision() {
+            const pBox = new THREE.Box3(
+                new THREE.Vector3(app.camera.position.x - 0.4, 0, app.camera.position.z - 0.4),
+                new THREE.Vector3(app.camera.position.x + 0.4, 3, app.camera.position.z + 0.4)
+            );
+            for(let i=0; i<app.walls.length; i++) {
+                if(pBox.intersectsBox(app.walls[i])) return true;
+            }
+            return false;
+        }
+
+        function handleMonsterAI(dt) {
+            if(app.monster.stunTimer > 0) {
+                app.monster.stunTimer -= dt;
+                return;
+            }
+
+            const bot = app.remotePlayers['bot'];
+            if(!bot) return;
+
+            // Ціль AI - локальний гравець (якщо він людина і не сховався у вентиляцію)
+            let targetPos = app.camera.position.clone();
+            
+            // Якщо гравець сховався, бот патрулює офіс зарядки
+            if(app.player.isHidden) {
+                targetPos.copy(app.officePos);
+            }
+
+            let bPos = bot.targetPos;
+            let dx = targetPos.x - bPos.x;
+            let dz = targetPos.z - bPos.z;
+            let dist = Math.hypot(dx, dz);
+
+            if(dist > 0.1) {
+                /* ВИПРАВЛЕННЯ 2: Бот розвертається прямо за вектором свого руху вперед */
+                let angle = Math.atan2(dx, dz);
+                bot.targetRot = angle;
+
+                bPos.x += (dx / dist) * app.monster.speed * dt;
+                bPos.z += (dz / dist) * app.monster.speed * dt;
+            }
+
+            if(Math.random() < 0.02) {
+                app.conn.send({
+                    type: 'update', id: 'bot', role: 'Animatronic',
+                    x: bPos.x, y: bPos.y, z: bPos.z, ry: bot.targetRot, hidden: false
+                });
+            }
+        }
+
+        /**
+         * АКТИВНІ ЗДІБНОСТІ ТА ВЕНТИЛЯЦІЯ [ E ]
+         */
+        function performAction() {
+            if (app.player.cooldown > 0 || app.player.stunnedTimer > 0) return;
 
             const px = app.camera.position.x;
             const pz = app.camera.position.z;
 
-            if (app.player.role === 'Animatronic') {
-                if (app.player.cooldown > 0) return;
-                
-                sfx.playMonsterHit();
+            // Здібність МОНСТРА: Атака з нанесенням шкоди вижившим
+            if(app.player.role === 'Animatronic') {
                 let hitSomeone = false;
-
                 for(let id in app.remotePlayers) {
-                    const rp = app.remotePlayers[id];
-                    if (rp.role !== 'Animatronic' && !rp.isHidden) {
-                        if (app.camera.position.distanceTo(rp.mesh.position) < 3.8) {
+                    let rp = app.remotePlayers[id];
+                    if(rp && rp.role !== 'Animatronic' && !rp.isHidden) {
+                        if(app.camera.position.distanceTo(rp.mesh.position) < 3.5) {
                             hitSomeone = true;
-                            if(app.conn && typeof app.conn.send === 'function') app.conn.send({ type: 'hit_player', target: id });
+                            if(app.conn) app.conn.send({ type: 'hit_player', target: id });
                         }
                     }
                 }
-                
-                if (hitSomeone) {
-                    showAlert("УДАР УСПІШНИЙ!");
-                } else {
-                    showAlert("ПРОМАХ!");
-                }
-
-                app.player.cooldown = 3.0; 
+                if(hitSomeone) { showAlert("УДАР НАНЕСЕНО!"); sfx.playMonsterHit(); }
+                else showAlert("ПРОМАХ АТАКИ!");
+                app.player.cooldown = 2.0;
                 return;
             }
 
-            let acted = false;
+            // Здібність МИСЛИВЦЯ: Стрільба Тейзером
+            if(app.player.role === 'Hunter') {
+                sfx.playTaser();
+                showAlert("ПОСТРІЛ ШОКЕРОМ ТЕЙЗЕР!");
+                
+                let hit = false;
+                // Перевірка влучання по боту
+                if(app.remotePlayers['bot'] && app.camera.position.distanceTo(app.remotePlayers['bot'].targetPos) < 12.0) {
+                    app.monster.stunTimer = 4.0;
+                    hit = true;
+                }
+                // Перевірка влучання по реальному гравцю
+                for(let id in app.remotePlayers) {
+                    if(app.remotePlayers[id].role === 'Animatronic' && app.camera.position.distanceTo(app.remotePlayers[id].mesh.position) < 12.0) {
+                        if(app.conn) app.conn.send({ type: 'monster_stun' });
+                        hit = true;
+                    }
+                }
+                showAlert(hit ? "ВЛУЧЕННЯ: МОНСТР ПАРАЛІЗОВАНИЙ!" : "ПРОМАХ ТЕЙЗЕРА!");
+                app.player.cooldown = 7.0;
+                return;
+            }
 
-            app.generators.forEach((gen, idx) => {
-                if(!gen.fixed && Math.hypot(gen.x - px, gen.z - pz) < 4.5) {
-                    gen.fixProgress += 15;
-                    sfx.playRepair();
-                    if(app.conn && typeof app.conn.send === 'function') app.conn.send({ type:'gen_fix', index: idx, progress: gen.fixProgress });
-                    if(gen.fixProgress >= 100) fixGenerator(idx);
-                    acted = true;
+            // Здібність МЕДИКА: Лікування себе або союзників поруч
+            if(app.player.role === 'Medic') {
+                sfx.playHeal();
+                app.player.hp = Math.min(100, app.player.hp + 35);
+                showAlert("ЛІКУВАННЯ ВИКОНАНО (+35 HP)");
+                if(app.conn) app.conn.send({ type: 'hit_player', target: 'heal_all_allies' });
+                app.player.cooldown = 8.0;
+                return;
+            }
+
+            // Перевірка взаємодії з ВЕНТИЛЯЦІЄЮ (Для всіх людей)
+            app.vents.forEach((vent) => {
+                if(Math.hypot(vent.x - px, vent.z - pz) < 2.5) {
+                    sfx.playDoor();
+                    if(!app.player.isHidden) {
+                        app.player.isHidden = true;
+                        app.camera.position.set(vent.x, 0.4, vent.z);
+                        showAlert("ВИ ЗАЛІЗЛИ У ВЕНТИЛЯЦІЮ (БЕЗПЕКА)");
+                    } else {
+                        app.player.isHidden = false;
+                        app.camera.position.y = app.player.height;
+                        showAlert("ВИ ВИЙШЛИ З ВЕНТИЛЯЦІЇ");
+                    }
+                    app.player.cooldown = 1.5;
                 }
             });
 
-            if(acted) return;
-
-            if (app.player.cooldown > 0) {
-                showAlert("Здібність перезаряджається!"); return;
-            }
-
-            if (app.player.role === 'Engineer') {
-                for(let i=0; i<app.vents.length; i++) {
-                    const v = app.vents[i];
-                    if(Math.hypot(v.x - px, v.z - pz) < 3) {
-                        app.player.isHidden = true;
-                        app.player.currentVentIdx = i;
-                        app.camera.position.set(v.x, -5, v.z); 
-                        app.player.cooldown = 60;
-                        showAlert("ВИ В УБЕЖИЩІ ВЕНТИЛЯЦІЇ (20с)! [E] - наступна шахта");
-                        
-                        setTimeout(() => {
-                            app.player.isHidden = false;
-                            const currentVent = app.vents[app.player.currentVentIdx];
-                            app.camera.position.set(currentVent.x, app.player.height, currentVent.z);
-                            showAlert("Ви вийшли з вентиляційного люку.");
-                        }, 20000);
-                        return;
-                    }
-                }
-
-                if(Math.hypot(px, pz) < 10) {
-                    toggleOfficeDoors(1); 
-                    app.player.cooldown = 20;
-                    showAlert("Гермодвері Офісу заблоковано на 10с!");
-                    if(app.conn && typeof app.conn.send === 'function') app.conn.send({type:'door_toggle', state: 1});
+            // Ремонт ГЕНЕРАТОРІВ поруч (Інженер лагодить удвічі швидше)
+            app.generators.forEach((gen, idx) => {
+                if(!gen.fixed && Math.hypot(gen.x - px, gen.z - pz) < 3.5) {
+                    let rate = app.player.role === 'Engineer' ? 30 : 15;
+                    gen.fixProgress += rate;
+                    sfx.playRepair();
                     
-                    setTimeout(() => { 
-                        toggleOfficeDoors(0); 
-                        if(app.conn && typeof app.conn.send === 'function') app.conn.send({type:'door_toggle', state: 0});
-                    }, 10000);
-                    return;
+                    if(app.conn) app.conn.send({ type: 'gen_fix', index: idx, progress: gen.fixProgress });
+                    if(gen.fixProgress >= 100) fixGenerator(idx);
+                    else showAlert(`РЕМОНТ ГЕНЕРАТОРА: ${gen.fixProgress}%`);
                 }
-            }
+            });
 
-            if (app.player.role === 'Hunter') {
-                sfx.playTaser();
-                let monsterHit = false;
-                
-                if(app.remotePlayers['bot'] && app.camera.position.distanceTo(app.remotePlayers['bot'].mesh.position) < 6.0) {
-                    app.monster.stunTimer = 3.0; monsterHit = true;
-                } else {
-                    for(let id in app.remotePlayers) {
-                        if(app.remotePlayers[id].role === 'Animatronic' && app.camera.position.distanceTo(app.remotePlayers[id].mesh.position) < 6.0) {
-                            if(app.conn && typeof app.conn.send === 'function') app.conn.send({ type: 'monster_stun' });
-                            monsterHit = true;
-                        }
-                    }
-                }
-
-                if(monsterHit) showAlert("МОНСТРА ЕЛЕКТРОШОКОВАНО НА 3с!");
-                else showAlert("Промах електрошокером!");
-                app.player.cooldown = 20;
-            }
-
-            if (app.player.role === 'Medic') {
-                if(app.player.hp < 100) {
-                    app.player.hp = 100;
-                    sfx.playHeal();
-                    app.player.cooldown = 30;
-                    showAlert("Медична аптечка успішно використана!");
-                } else {
-                    showAlert("Ваше здоров'я і так повне.");
-                }
+            // Перевірка втечі через ворота
+            if(app.escapeOpen && Math.hypot(app.exitGate.x - px, app.exitGate.z - pz) < 4.0) {
+                alert("ВІТАЄМО! ВИ ВИБРАЛИСЯ З ЛАБІРИНТУ ЖАХІВ!");
+                location.reload();
             }
         }
 
         function fixGenerator(idx) {
-            app.generators[idx].fixed = true;
-            app.generators[idx].lightMesh.material.color.setHex(0x00ff00);
-            app.generators[idx].pointLight.color.setHex(0x00ff00);
-            app.fixedGenerators++;
+            const gen = app.generators[idx];
+            if(!gen || gen.fixed) return;
+            gen.fixed = true;
+            gen.fixProgress = 100;
+            gen.light.color.setHex(0x00ff00);
             sfx.playGenDone();
             
-            if (app.fixedGenerators >= 10 && !app.escapeOpen) {
+            app.fixedGenerators++;
+            showAlert(`ГЕНЕРАТОР [${idx+1}] ЗАПУЩЕНО В МЕРЕЖУ!`);
+
+            if(app.fixedGenerators >= app.maxGenerators) {
                 app.escapeOpen = true;
-                showAlert("БРАМА ЕВАКУАЦІЇ ВІДЧИНЕНА! БІЖІТЬ НА ПІВНІЧ!");
-                if(app.exitGate) {
-                    app.exitGate.mesh.position.y = -10; 
-                    app.exitGate.boxObj.setFromObject(app.exitGate.mesh); 
-                }
+                showAlert("УВАГА! ГОЛОВНІ ВИХІДНІ ВОРОТА ВІДЧИНЕНО! БІЖІТЬ!");
+                app.scene.remove(app.exitGate.mesh);
+                // Прибираємо колізію стіни воріт
+                app.walls = app.walls.filter(b => b !== app.exitGate.boxObj);
             }
-        }
-
-        function toggleOfficeDoors(state) {
-            sfx.playDoor();
-            app.officeDoors.forEach(d => {
-                d.mesh.position.y = state === 1 ? d.height/2 : d.height + d.height/2;
-                d.box.setFromObject(d.mesh);
-                if(state === 1) {
-                    app.walls.push(d.box); 
-                } else {
-                    app.walls = app.walls.filter(b => b !== d.box); 
-                }
-            });
-        }
-
-        function showAlert(text) {
-            const el = document.getElementById('alert-text');
-            el.innerText = text;
-            setTimeout(() => { if(el.innerText === text) el.innerText = ''; }, 3500);
         }
 
         function executeJumpscare() {
             if(app.jumpscareActive) return;
             app.jumpscareActive = true;
-            app.player.hp = 0; 
-            
             sfx.playJumpscare();
             
-            const scareScreen = document.getElementById('jumpscare-screen');
-            scareScreen.classList.add('shaking'); 
-            scareScreen.style.display = 'flex';
-            if(document.pointerLockElement) document.exitPointerLock();
-            
-            setTimeout(() => { 
-                scareScreen.style.display = 'none';
-                scareScreen.classList.remove('shaking'); 
-                document.getElementById('hud').style.display = 'none';
-                document.getElementById('game-container').style.display = 'none';
-                
-                if (app.renderer) app.renderer.setAnimationLoop(null);
-                
-                app.player.hp = 100;
-                app.player.stamina = 100;
-                app.player.battery = 60;
-                app.jumpscareActive = false;
-                
-                app.showPanel('panel-lobby');
-                document.getElementById('ui-layer').style.display = 'flex';
+            if(app.conn) app.conn.send({ type: 'jumpscare' });
+
+            document.getElementById('jumpscare-screen').style.display = 'flex';
+            document.getElementById('hud').style.display = 'none';
+            document.getElementById('touch-ui').style.display = 'none';
+
+            setTimeout(() => {
+                alert("ГРА ЗАКІНЧЕНА. ХОРРОР СПІЙМАВ ВАС!");
+                location.reload();
             }, 3500);
         }
 
-        function gameLoop() {
-            const dt = Math.min(app.clock.getDelta(), 0.1);
-            if(app.player.hp <= 0) return;
-
-            if(!app.player.isHidden && (app.player.cooldown <= 0 || app.player.role !== 'Animatronic')) {
-                updatePlayerPhysics(dt);
-            }
-
-            if ((app.mode === 'single' || !app.peer) && app.monster.state === 'hunting') {
-                updateBotMonster(dt);
-            }
-
-            broadcastState();
-            
-            for(let id in app.remotePlayers) {
-                const rp = app.remotePlayers[id];
-                if (!rp.mesh) continue;
-                rp.mesh.visible = !rp.isHidden;
-                if(!rp.isHidden) {
-                    if (id === 'bot' && (app.mode === 'single' || !app.peer)) {
-                        if (rp.mesh.thighL) {
-                            const animTime = app.clock.getElapsedTime() * app.monster.speed * 1.8;
-                            rp.mesh.thighL.rotation.x = Math.sin(animTime) * 0.45;
-                            rp.mesh.thighR.rotation.x = -Math.sin(animTime) * 0.45;
-                            rp.mesh.upperArmL.rotation.x = -Math.sin(animTime) * 0.3;
-                            rp.mesh.upperArmR.rotation.x = Math.sin(animTime) * 0.3;
-                        }
-                        continue; 
-                    }
-                    
-                    // Вирівнюємо висоту мережевих гравців відносно рівня підлоги
-                    let tPos = rp.targetPos.clone();
-                    tPos.y = Math.max(0, tPos.y - 1.6); 
-                    
-                    rp.mesh.position.lerp(tPos, 15 * dt);
-                    rp.mesh.rotation.y = rp.targetRot;
-
-                    // Анімація кроків для віддаленого монстра-гравця
-                    if (rp.role === 'Animatronic' && rp.mesh.thighL) {
-                        const animTime = app.clock.getElapsedTime() * 8;
-                        rp.mesh.thighL.rotation.x = Math.sin(animTime) * 0.45;
-                        rp.mesh.thighR.rotation.x = -Math.sin(animTime) * 0.45;
-                        rp.mesh.upperArmL.rotation.x = -Math.sin(animTime) * 0.3;
-                        rp.mesh.upperArmR.rotation.x = Math.sin(animTime) * 0.3;
-                    }
-                }
-            }
-
-            app.flickeringLamps.forEach(lamp => {
-                if (Math.random() > 0.985) {
-                    lamp.light.intensity = 0;
-                    lamp.bulbMat.color.setHex(0x111111);
-                    if(Math.random() > 0.6) sfx.playFlicker();
-                } else {
-                    lamp.light.intensity = 1.2 + Math.random() * 0.2;
-                    lamp.bulbMat.color.setHex(0xfff6e0);
-                }
-            });
-
-            if(Math.random() > 0.95) app.alarmLight.intensity = Math.random() * 2.2;
-            
-            if (app.spookyDolls) {
-                const px = app.camera.position.x;
-                const pz = app.camera.position.z;
-                app.spookyDolls.forEach(doll => {
-                    if (doll.laughCooldown > 0) {
-                        doll.laughCooldown -= dt;
-                    } else {
-                        const dist = Math.hypot(doll.x - px, doll.z - pz);
-                        if (dist < 4.5 && app.player.hp > 0) {
-                            sfx.playSpookyLaugh();
-                            doll.laughCooldown = 15.0; 
-                            showAlert("Чути дитячий сміх... Лялька поруч.");
-                        }
-                    }
-                });
-            }
-
-            updateHUD(dt);
-            app.renderer.render(app.scene, app.camera);
-        }
-
-        function updatePlayerPhysics(dt) {
-            const p = app.player;
-            let currentSpeed = p.speed;
-
-            const joyY = app.touch && app.touch.delta ? app.touch.delta.y : 0;
-            const isMoving = app.keys.w || app.keys.s || app.keys.a || app.keys.d || app.touch.joyActive;
-            
-            if (isMoving && p.isGrounded && !p.isHidden) {
-                p.stepTimer += dt * (app.keys.shift ? 1.6 : 1.0);
-                if (p.stepTimer >= 0.4) {
-                    sfx.playStep(false);
-                    p.stepTimer = 0;
-                }
-            }
-
-            if ((app.keys.shift || joyY < -0.8) && p.stamina > 0 && p.isGrounded) {
-                currentSpeed *= 1.6;
-                p.stamina = Math.max(0, p.stamina - dt * 25);
-            } else {
-                p.stamina = Math.min(100, p.stamina + dt * 10);
-            }
-
-            let moveX = 0, moveZ = 0;
-            if (app.keys.w) moveZ -= 1;
-            if (app.keys.s) moveZ += 1;
-            if (app.keys.a) moveX -= 1;
-            if (app.keys.d) moveX += 1;
-
-            if(app.isMobile && app.touch.joyActive) {
-                moveX = app.touch.delta.x; moveZ = app.touch.delta.y;
-            }
-
-            const moveVec = new THREE.Vector3(moveX, 0, moveZ);
-            if (moveVec.lengthSq() > 0) moveVec.normalize();
-            moveVec.applyAxisAngle(new THREE.Vector3(0,1,0), app.camera.rotation.y);
-
-            const nextPos = app.camera.position.clone();
-            
-            nextPos.x += moveVec.x * currentSpeed * dt;
-            if(!isColliding(nextPos)) {
-                app.camera.position.x = nextPos.x;
-            } else {
-                nextPos.x = app.camera.position.x; 
-            }
-
-            nextPos.z += moveVec.z * currentSpeed * dt;
-            if(!isColliding(nextPos)) {
-                app.camera.position.z = nextPos.z;
-            }
-
-            p.yVelocity -= 25 * dt; 
-            app.camera.position.y += p.yVelocity * dt;
-
-            if (app.camera.position.y <= p.height) {
-                app.camera.position.y = p.height;
-                p.yVelocity = 0;
-                p.isGrounded = true;
-            }
-
-            if(p.battery > 0 && p.role !== 'Animatronic') {
-                p.battery -= dt * 0.5; 
-                app.player.light.intensity = p.battery < 10 && Math.random() > 0.5 ? 0 : 3;
-            } else {
-                app.player.light.intensity = 0; 
-            }
-
-            app.player.light.position.copy(app.camera.position);
-            const targetVec = new THREE.Vector3(0, 0, -1).applyQuaternion(app.camera.quaternion);
-            app.player.light.target.position.copy(app.camera.position).add(targetVec);
-
-            const distToCenter = Math.hypot(app.camera.position.x, app.camera.position.z);
-            if (distToCenter < 10 && p.role !== 'Animatronic') {
-                p.battery = Math.min(60, p.battery + dt * 10);
-                document.getElementById('recharge-icon').style.display = 'block';
-            } else {
-                document.getElementById('recharge-icon').style.display = 'none';
-            }
-
-            if (app.escapeOpen && app.camera.position.z < -50) {
-                showAlert("ВИ УСПІШНО ВТЕКЛИ З ЛАБІРИНТУ!");
-                setTimeout(() => location.reload(), 3000);
-            }
-        }
-
-        function isColliding(pos) {
-            const radius = 0.40; 
-            const pBox = new THREE.Box3(
-                new THREE.Vector3(pos.x - radius, 0, pos.z - radius),
-                new THREE.Vector3(pos.x + radius, app.player.height + 0.2, pos.z + radius)
-            );
-            
-            const wallCenter = new THREE.Vector3();
-            for(let i = 0; i < app.walls.length; i++) {
-                const wallBox = app.walls[i];
-                wallBox.getCenter(wallCenter);
-                if (pos.distanceToSquared(wallCenter) < 49) { 
-                    if(wallBox.intersectsBox(pBox)) return true;
-                }
-            }
-            return false;
-        }
-
-        function updateBotMonster(dt) {
-            const bot = app.remotePlayers['bot'];
-            if (!bot || !bot.mesh) return; 
-
-            if(app.monster.stunTimer > 0) {
-                app.monster.stunTimer -= dt; return;
-            }
-
-            const dist = bot.mesh.position.distanceTo(app.camera.position);
-
-            if (dist < 1.8) {
-                app.player.hp -= 50; 
-                if(app.player.hp <= 0) {
-                    executeJumpscare();
-                } else {
-                    showAlert("ВАС ВДАРИЛИ! ТІКАЙТЕ!");
-                    sfx.playMonsterHit();
-                    app.monster.stunTimer = 2.0; 
-                }
-                app.monster.state = 'idle'; 
-                setTimeout(() => { if(app.player.hp > 0) app.monster.state = 'hunting'; }, 2000);
-                return;
-            }
-
-            bot.mesh.lookAt(app.camera.position.x, bot.mesh.position.y, app.camera.position.z);
-            const dir = new THREE.Vector3(); bot.mesh.getWorldDirection(dir);
-            
-            const next = bot.mesh.position.clone();
-            next.x += dir.x * app.monster.speed * dt;
-            
-            const botBox = new THREE.Box3().setFromCenterAndSize(next, new THREE.Vector3(1.1, 2.2, 1.1));
-            let blockedX = false, blockedZ = false;
-            
-            const botCenter = new THREE.Vector3();
-            for(let w of app.walls) { 
-                w.getCenter(botCenter);
-                if(next.distanceToSquared(botCenter) < 49) {
-                    if(w.intersectsBox(botBox)) { blockedX = true; break; } 
-                }
-            }
-            if(!blockedX) bot.mesh.position.x = next.x;
-
-            const nextZPos = new THREE.Vector3(bot.mesh.position.x, next.y, next.z + dir.z * app.monster.speed * dt);
-            botBox.setFromCenterAndSize(nextZPos, new THREE.Vector3(1.1, 2.2, 1.1));
-            
-            for(let w of app.walls) { 
-                w.getCenter(botCenter);
-                if(nextZPos.distanceToSquared(botCenter) < 49) {
-                    if(w.intersectsBox(botBox)) { blockedZ = true; break; } 
-                }
-            }
-            if(!blockedZ) bot.mesh.position.z += dir.z * app.monster.speed * dt;
-
-            if (bot.mesh.thighL) {
-                const animTime = app.clock.getElapsedTime() * app.monster.speed * 1.8;
-                bot.mesh.thighL.rotation.x = Math.sin(animTime) * 0.45;
-                bot.mesh.thighR.rotation.x = -Math.sin(animTime) * 0.45;
-                bot.mesh.upperArmL.rotation.x = -Math.sin(animTime) * 0.3;
-                bot.mesh.upperArmR.rotation.x = Math.sin(animTime) * 0.3;
-            }
-        }
-
         function updateHUD(dt) {
-            document.getElementById('bar-hp').style.width = app.player.hp + '%';
-            document.getElementById('bar-stamina').style.width = app.player.stamina + '%';
+            document.getElementById('bar-hp').style.width = Math.max(0, app.player.hp) + '%';
+            document.getElementById('bar-stamina').style.width = Math.max(0, app.player.stamina) + '%';
             document.getElementById('bar-battery').style.width = (app.player.battery / 60 * 100) + '%';
             
-            let currentRoleUa = app.player.role === 'Animatronic' ? 'Монстр (Аніматронік)' : (app.player.role === 'Engineer' ? 'Інженер' : (app.player.role === 'Hunter' ? 'Мисливець' : 'Медик'));
+            let currentRoleUa = app.player.role === 'Animatronic' ? 'Монстр (Аніматронік)' : (app.player.role === 'Engineer' ? 'Інженер (Швидкий ремонт)' : (app.player.role === 'Hunter' ? 'Мисливець (Тейзер Шокер)' : 'Медик (Аптечка)'));
             document.getElementById('role-text').innerText = currentRoleUa;
-            document.getElementById('gen-text').innerText = `ГЕНЕРАТОРИ: ${app.fixedGenerators} / 10`;
+            document.getElementById('gen-text').innerText = `ГЕНЕРАТОРИ: ${app.fixedGenerators} / ${app.maxGenerators}`;
 
             if (app.player.cooldown > 0) {
-                app.player.cooldown -= dt;
                 document.getElementById('cooldown-text').innerText = `ЗДІБНІСТЬ КД: ${Math.ceil(app.player.cooldown)}c`;
+            } else if (app.player.stunnedTimer > 0) {
+                document.getElementById('cooldown-text').innerText = `ПАРАЛІЧ: ${Math.ceil(app.player.stunnedTimer)}c`;
             } else {
                 document.getElementById('cooldown-text').innerText = 'ЗДІБНІСТЬ ГОТОВА [E]';
             }
@@ -1891,6 +1374,119 @@
             app.camera.aspect = window.innerWidth / window.innerHeight;
             app.camera.updateProjectionMatrix();
             app.renderer.setSize(window.innerWidth, window.innerHeight);
+        }
+
+        /**
+         * СЛУХАЧІ КЕРУВАННЯ ТА ВВЕДЕННЯ (Input Listeners)
+         */
+        function setupControls() {
+            // Мишка (Поворот камери ПК)
+            window.addEventListener('mousemove', (e) => {
+                if (document.pointerLockElement === document.getElementById('game-container') && app.player.hp > 0) {
+                    app.camera.rotation.y -= e.movementX * 0.0025;
+                    app.camera.rotation.x -= e.movementY * 0.0025;
+                    app.camera.rotation.x = Math.max(-Math.PI/2.2, Math.min(Math.PI/2.2, app.camera.rotation.x));
+                }
+            });
+
+            // Клавіатура ПК
+            window.addEventListener('keydown', (e) => {
+                const k = e.key.toLowerCase();
+                if(k === 'w' || k === 'ц') app.keys.w = true;
+                if(k === 's' || k === 'і' || k === 'ы') app.keys.s = true;
+                if(k === 'a' || k === 'ф') app.keys.a = true;
+                if(k === 'd' || k === 'в') app.keys.d = true;
+                if(e.key === 'Shift') app.keys.shift = true;
+                if(e.key === ' ') {
+                    if(app.player.isGrounded) {
+                        app.player.yVelocity = app.player.jumpForce;
+                        app.player.isGrounded = false;
+                    }
+                }
+                if(k === 'e' || k === 'у') {
+                    if(!app.keys.e_pressed) {
+                        app.keys.e_pressed = true;
+                        performAction();
+                    }
+                }
+            });
+
+            window.addEventListener('keyup', (e) => {
+                const k = e.key.toLowerCase();
+                if(k === 'w' || k === 'ц') app.keys.w = false;
+                if(k === 's' || k === 'і' || k === 'ы') app.keys.s = false;
+                if(k === 'a' || k === 'ф') app.keys.a = false;
+                if(k === 'd' || k === 'в') app.keys.d = false;
+                if(e.key === 'Shift') app.keys.shift = false;
+                if(k === 'e' || k === 'у') app.keys.e_pressed = false;
+            });
+
+            // МОБІЛЬНЕ СЕНСОРНЕ КЕРУВАННЯ (Touch Controls)
+            const joy = document.getElementById('touch-left');
+            const stick = document.getElementById('joy-stick');
+
+            joy.addEventListener('touchstart', (e) => {
+                e.preventDefault();
+                app.touch.joyActive = true;
+                const t = e.touches[0];
+                app.touch.origin = { x: t.clientX, y: t.clientY };
+            });
+
+            joy.addEventListener('touchmove', (e) => {
+                if(!app.touch.joyActive) return;
+                const t = e.touches[0];
+                let dx = t.clientX - app.touch.origin.x;
+                let dy = t.clientY - app.touch.origin.y;
+                const maxD = 45;
+                
+                const len = Math.hypot(dx, dy);
+                if(len > maxD) { dx = (dx/len)*maxD; dy = (dy/len)*maxD; }
+                
+                stick.style.transform = `translate(${dx}px, ${dy}px)`;
+                app.touch.delta = { x: dx / maxD, y: dy / maxD };
+            });
+
+            joy.addEventListener('touchend', () => {
+                app.touch.joyActive = false;
+                stick.style.transform = 'translate(0px, 0px)';
+                app.touch.delta = { x: 0, y: 0 };
+            });
+
+            // Сенсорний огляд екраном мобільного
+            document.addEventListener('touchstart', (e) => {
+                if (e.target.closest('#touch-left') || e.target.closest('#touch-actions')) return;
+                const t = e.changedTouches[0];
+                if (app.touch.lookId === null) {
+                    app.touch.lookId = t.identifier;
+                    app.touch.lastLook = { x: t.clientX, y: t.clientY };
+                }
+            }, { passive: false });
+
+            document.addEventListener('touchmove', (e) => {
+                for (let i = 0; i < e.changedTouches.length; i++) {
+                    const t = e.changedTouches[i];
+                    if (t.identifier === app.touch.lookId && app.player.hp > 0) {
+                        app.camera.rotation.y -= (t.clientX - app.touch.lastLook.x) * 0.006;
+                        app.camera.rotation.x -= (t.clientY - app.touch.lastLook.y) * 0.006;
+                        app.camera.rotation.x = Math.max(-Math.PI/2.1, Math.min(Math.PI/2.1, app.camera.rotation.x));
+                        app.touch.lastLook = { x: t.clientX, y: t.clientY };
+                    }
+                }
+            }, { passive: false });
+
+            document.addEventListener('touchend', (e) => {
+                for (let i = 0; i < e.changedTouches.length; i++) {
+                    if (e.changedTouches[i].identifier === app.touch.lookId) app.touch.lookId = null;
+                }
+            });
+
+            document.getElementById('btn-t-action').addEventListener('touchstart', (e) => { e.preventDefault(); performAction(); });
+            document.getElementById('btn-t-jump').addEventListener('touchstart', (e) => {
+                e.preventDefault();
+                if (app.player.isGrounded) { app.player.yVelocity = app.player.jumpForce; app.player.isGrounded = false; }
+            });
+            document.getElementById('btn-t-sprint').addEventListener('touchstart', (e) => { e.preventDefault(); app.keys.shift = true; });
+            document.getElementById('btn-t-sprint').addEventListener('touchend', (e) => { e.preventDefault(); app.keys.shift = false; });
         }
     </script>
 </body>
