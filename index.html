@@ -88,6 +88,7 @@
         #alert-text { font-size: 18px; color: #ff3333; font-weight: bold; margin-top: 10px; text-transform: uppercase; text-shadow: 0 0 10px red; }
         #recharge-icon { display: none; color: #ddaa00; font-size: 18px; font-weight: bold; animation: pulse 1s infinite; }
 
+        @viewport { width: device-width; zoom: 1.0; }
         @keyframes pulse { 0% { opacity: 1; } 50% { opacity: 0.3; } 100% { opacity: 1; } }
 
         /* --- СКРІМЕР ТА ЕФЕКТИ --- */
@@ -187,8 +188,6 @@
             100% { transform: scale(1.35); filter: brightness(2.0); }
         }
         @keyframes zoomFace { 0% { transform: scale(0.8); } 100% { transform: scale(1.5); } }
-
-        #jumpscare-text { color: white; font-size: 6vw; font-weight: bold; z-index: 1000; text-shadow: 0 0 30px red; letter-spacing: 10px; margin-top: 20px; }
 
         /* --- ТАЧ УПРАВЛІННЯ --- */
         #touch-ui { position: absolute; top: 0; left: 0; width: 100%; height: 100%; z-index: 15; display: none; }
@@ -509,8 +508,7 @@
                 app.updateLobbyUI();
                 
                 setTimeout(() => {
-                    const roles = ['Medic', 'Hunter', 'Engineer', 'Animatronic'];
-                    app.player.role = roles[Math.floor(Math.random() * roles.length)];
+                    app.player.role = 'Engineer';
                     document.getElementById('ui-layer').style.display = 'none';
                     initGame();
                     spawnBotMonster(); 
@@ -538,12 +536,18 @@
 
         app.startMultiplayer = function() {
             sfx.playClick();
-            const roles = ['Engineer', 'Hunter', 'Medic', 'Animatronic'];
-            const p1Role = roles[Math.floor(Math.random() * roles.length)];
             
-            let p2Role = roles[Math.floor(Math.random() * roles.length)];
-            while (p2Role === p1Role) {
-                p2Role = roles[Math.floor(Math.random() * roles.length)];
+            // ГАРАНТОВАНО РОЗДІЛЯЄМО РОЛІ: один обов'язково монстр, інший - виживший
+            const survivors = ['Engineer', 'Hunter', 'Medic'];
+            const p1IsMonster = Math.random() > 0.5;
+            
+            let p1Role, p2Role;
+            if (p1IsMonster) {
+                p1Role = 'Animatronic';
+                p2Role = survivors[Math.floor(Math.random() * survivors.length)];
+            } else {
+                p2Role = 'Animatronic';
+                p1Role = survivors[Math.floor(Math.random() * survivors.length)];
             }
             
             app.player.role = p1Role;
@@ -735,7 +739,7 @@
                     }
 
                     if (cx > 5 && cz > 5) {
-                        safeMonsterSpawnPoints.push(new THREE.Vector3(wx, 1.25, wz));
+                        safeMonsterSpawnPoints.push(new THREE.Vector3(wx, 0, wz)); // висота 0 для правильного рівня ніг
                     }
 
                     if ((x % 4 === 0 && z % 4 === 0) || (x % 3 === 0 && z % 5 === 0)) {
@@ -770,7 +774,7 @@
             if (safeMonsterSpawnPoints.length > 0) {
                 app.monsterSpawnPos = safeMonsterSpawnPoints[Math.floor(Math.random() * safeMonsterSpawnPoints.length)];
             } else {
-                app.monsterSpawnPos = new THREE.Vector3(40, 1.25, 40);
+                app.monsterSpawnPos = new THREE.Vector3(40, 0, 40);
             }
 
             createSpookyDoll(0, -8);     
@@ -1078,12 +1082,41 @@
             app.flickeringLamps.push({ group: lampGroup, light: light, bulbMat: bulb.material });
         }
 
+        // ФУНКЦІЯ СТВОРЕННЯ ТЕКСТОВОГО НІКНЕЙМУ В 3D
+        function createNameTag(name) {
+            const canvas = document.createElement('canvas');
+            canvas.width = 512;
+            canvas.height = 128;
+            const ctx = canvas.getContext('2d');
+            
+            ctx.fillStyle = 'rgba(0, 0, 0, 0.65)';
+            if (ctx.roundRect) ctx.roundRect(10, 10, 492, 108, 15); else ctx.fillRect(10, 10, 492, 108);
+            ctx.fill();
+            
+            ctx.strokeStyle = '#ff3333';
+            ctx.lineWidth = 4;
+            ctx.stroke();
+
+            ctx.font = 'Bold 30px Courier New';
+            ctx.fillStyle = '#ffffff';
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+            ctx.fillText(name, 256, 64);
+            
+            const texture = new THREE.CanvasTexture(canvas);
+            const material = new THREE.SpriteMaterial({ map: texture, depthTest: true });
+            const sprite = new THREE.Sprite(material);
+            sprite.scale.set(3.2, 0.8, 1);
+            return sprite;
+        }
+
         function createRemotePlayer(id, role) {
             const isMonster = role === 'Animatronic';
+            let mainGroup = new THREE.Group(); 
             
             if(isMonster) {
                 const group = new THREE.Group();
-                const mat = new THREE.MeshPhongMaterial({ color: 0x4a0e0e, shininess: 25 }); 
+                const mat = new THREE.MeshPhongMaterial({ color: 0x880000, shininess: 25 }); 
                 const metalMat = new THREE.MeshPhongMaterial({ color: 0x1f1f1f, shininess: 80 }); 
 
                 const pelvis = new THREE.Mesh(new THREE.BoxGeometry(0.8, 0.15, 0.5), metalMat);
@@ -1184,35 +1217,52 @@
                 clawR.rotation.x = -Math.PI/4;
                 group.add(clawR);
 
-                group.thighL = thighL;
-                group.thighR = thighR;
-                group.upperArmL = upperArmL;
-                group.upperArmR = upperArmR;
+                mainGroup.add(group);
+                mainGroup.thighL = thighL;
+                mainGroup.thighR = thighR;
+                mainGroup.upperArmL = upperArmL;
+                mainGroup.upperArmR = upperArmR;
 
                 const eyeLight = new THREE.PointLight(0xff0000, 1.5, 8);
                 eyeLight.position.set(0, 2.6, 0.6);
-                group.add(eyeLight);
-
-                const initialPos = (app.remotePlayers[id] && app.remotePlayers[id].targetPos) 
-                    ? app.remotePlayers[id].targetPos.clone() 
-                    : (app.monsterSpawnPos ? app.monsterSpawnPos.clone() : new THREE.Vector3(40, 1.25, 40));
-                
-                group.position.copy(initialPos);
-                app.scene.add(group);
-                
-                app.remotePlayers[id] = { mesh: group, targetPos: initialPos, targetRot: 0, isHidden: false, role: role };
+                mainGroup.add(eyeLight);
             } else {
                 const geo = new THREE.CapsuleGeometry(0.42, 0.85, 4, 8);
-                const mat = new THREE.MeshPhongMaterial({ color: 0x005500, shininess: 10 });
+                // Яскравий неоновий колір для кращої видимості у темряві
+                const mat = new THREE.MeshPhongMaterial({ color: 0x00ff66, shininess: 40 });
                 const mesh = new THREE.Mesh(geo, mat);
-                app.scene.add(mesh);
-                app.remotePlayers[id] = { mesh: mesh, targetPos: new THREE.Vector3(), targetRot: 0, isHidden: false, role: role };
+                mesh.position.y = 0.85; 
+                mainGroup.add(mesh);
             }
+
+            // Додаємо табличку з ніком над головою
+            let pName = "Гравець";
+            if (id === 'bot') {
+                pName = "Аніматронік (Бот)";
+            } else {
+                const found = app.playersList.find(p => p.id === id);
+                if (found) pName = found.name;
+            }
+            let rLabel = role === 'Animatronic' ? 'Монстр' : (role === 'Engineer' ? 'Інженер' : (role === 'Hunter' ? 'Мисливець' : 'Медик'));
+            const nameTag = createNameTag(`${pName} [${rLabel}]`);
+            nameTag.position.y = isMonster ? 3.6 : 1.9;
+            mainGroup.add(nameTag);
+
+            const initialPos = (app.remotePlayers[id] && app.remotePlayers[id].targetPos) 
+                ? app.remotePlayers[id].targetPos.clone() 
+                : (isMonster && app.monsterSpawnPos ? app.monsterSpawnPos.clone() : new THREE.Vector3(0, 0, 0));
+            
+            mainGroup.position.copy(initialPos);
+            app.scene.add(mainGroup);
+            
+            app.remotePlayers[id] = { mesh: mainGroup, targetPos: initialPos, targetRot: 0, isHidden: false, role: role };
         }
+
+        function sampleBotMonster() {} // затичка
 
         function spawnBotMonster() {
             let botSpeed = 5.0; 
-            let spawnPos = app.monsterSpawnPos ? app.monsterSpawnPos.clone() : new THREE.Vector3(40, 1.25, 40);
+            let spawnPos = app.monsterSpawnPos ? app.monsterSpawnPos.clone() : new THREE.Vector3(40, 0, 40);
 
             if (app.mode === 'single') {
                 if (app.difficulty === 1) botSpeed = 4.0;
@@ -1220,7 +1270,7 @@
                 else if (app.difficulty === 3) botSpeed = 7.0;
                 else if (app.difficulty === 4) {
                     botSpeed = 8.5; 
-                    spawnPos = new THREE.Vector3(15, 1.25, 15); 
+                    spawnPos = new THREE.Vector3(15, 0, 15); 
                 }
             }
 
@@ -1268,7 +1318,6 @@
             const touchLeft = document.getElementById('touch-left');
             const joyStick = document.getElementById('joy-stick');
             
-            // 1. Джойстик (Рух)
             touchLeft.addEventListener('touchstart', (e) => {
                 e.preventDefault();
                 app.touch.joyActive = true;
@@ -1292,8 +1341,6 @@
                 }
                 
                 joyStick.style.transform = `translate(${dx}px, ${dy}px)`;
-                
-                // Передаємо значення джойстика у фізичний рушій
                 app.touch.delta.x = dx / maxDist;
                 app.touch.delta.y = dy / maxDist;
             }, {passive: false});
@@ -1305,9 +1352,7 @@
                 joyStick.style.transform = `translate(0px, 0px)`;
             });
 
-            // 2. Огляд камерою (Свайп по правій частині екрану)
             document.addEventListener('touchstart', (e) => {
-                // Ігноруємо натискання на UI-кнопки та лівий джойстик
                 if (e.target.closest('#touch-left') || e.target.closest('#touch-actions')) return;
                 const touch = e.changedTouches[0];
                 if (app.touch.lookId === null) {
@@ -1322,7 +1367,6 @@
                     if (touch.identifier === app.touch.lookId && app.player.hp > 0) {
                         app.camera.rotation.y -= (touch.clientX - app.touch.lastLook.x) * 0.005;
                         app.camera.rotation.x -= (touch.clientY - app.touch.lastLook.y) * 0.005;
-                        // Блокування повороту шиї на 360 градусів
                         app.camera.rotation.x = Math.max(-Math.PI/2.1, Math.min(Math.PI/2.1, app.camera.rotation.x));
                         app.touch.lastLook = { x: touch.clientX, y: touch.clientY };
                     }
@@ -1337,7 +1381,6 @@
                 }
             });
 
-            // 3. Кнопки Дій
             document.getElementById('btn-t-action').addEventListener('touchstart', (e) => {
                 e.preventDefault();
                 performAction();
@@ -1536,7 +1579,6 @@
             app.officeDoors.forEach(d => {
                 d.mesh.position.y = state === 1 ? d.height/2 : d.height + d.height/2;
                 d.box.setFromObject(d.mesh);
-                
                 if(state === 1) {
                     app.walls.push(d.box); 
                 } else {
@@ -1569,9 +1611,7 @@
                 document.getElementById('hud').style.display = 'none';
                 document.getElementById('game-container').style.display = 'none';
                 
-                if (app.renderer) {
-                    app.renderer.setAnimationLoop(null);
-                }
+                if (app.renderer) app.renderer.setAnimationLoop(null);
                 
                 app.player.hp = 100;
                 app.player.stamina = 100;
@@ -1603,10 +1643,31 @@
                 rp.mesh.visible = !rp.isHidden;
                 if(!rp.isHidden) {
                     if (id === 'bot' && (app.mode === 'single' || !app.peer)) {
+                        if (rp.mesh.thighL) {
+                            const animTime = app.clock.getElapsedTime() * app.monster.speed * 1.8;
+                            rp.mesh.thighL.rotation.x = Math.sin(animTime) * 0.45;
+                            rp.mesh.thighR.rotation.x = -Math.sin(animTime) * 0.45;
+                            rp.mesh.upperArmL.rotation.x = -Math.sin(animTime) * 0.3;
+                            rp.mesh.upperArmR.rotation.x = Math.sin(animTime) * 0.3;
+                        }
                         continue; 
                     }
-                    rp.mesh.position.lerp(rp.targetPos, 15 * dt);
+                    
+                    // Вирівнюємо висоту мережевих гравців відносно рівня підлоги
+                    let tPos = rp.targetPos.clone();
+                    tPos.y = Math.max(0, tPos.y - 1.6); 
+                    
+                    rp.mesh.position.lerp(tPos, 15 * dt);
                     rp.mesh.rotation.y = rp.targetRot;
+
+                    // Анімація кроків для віддаленого монстра-гравця
+                    if (rp.role === 'Animatronic' && rp.mesh.thighL) {
+                        const animTime = app.clock.getElapsedTime() * 8;
+                        rp.mesh.thighL.rotation.x = Math.sin(animTime) * 0.45;
+                        rp.mesh.thighR.rotation.x = -Math.sin(animTime) * 0.45;
+                        rp.mesh.upperArmL.rotation.x = -Math.sin(animTime) * 0.3;
+                        rp.mesh.upperArmR.rotation.x = Math.sin(animTime) * 0.3;
+                    }
                 }
             }
 
@@ -1623,7 +1684,6 @@
 
             if(Math.random() > 0.95) app.alarmLight.intensity = Math.random() * 2.2;
             
-            // Інтерактивна перевірка відстані до ляльок для дитячого сміху
             if (app.spookyDolls) {
                 const px = app.camera.position.x;
                 const pz = app.camera.position.z;
@@ -1642,7 +1702,6 @@
             }
 
             updateHUD(dt);
-
             app.renderer.render(app.scene, app.camera);
         }
 
@@ -1767,7 +1826,6 @@
                     sfx.playMonsterHit();
                     app.monster.stunTimer = 2.0; 
                 }
-                
                 app.monster.state = 'idle'; 
                 setTimeout(() => { if(app.player.hp > 0) app.monster.state = 'hunting'; }, 2000);
                 return;
@@ -1816,7 +1874,8 @@
             document.getElementById('bar-stamina').style.width = app.player.stamina + '%';
             document.getElementById('bar-battery').style.width = (app.player.battery / 60 * 100) + '%';
             
-            document.getElementById('role-text').innerText = app.player.role;
+            let currentRoleUa = app.player.role === 'Animatronic' ? 'Монстр (Аніматронік)' : (app.player.role === 'Engineer' ? 'Інженер' : (app.player.role === 'Hunter' ? 'Мисливець' : 'Медик'));
+            document.getElementById('role-text').innerText = currentRoleUa;
             document.getElementById('gen-text').innerText = `ГЕНЕРАТОРИ: ${app.fixedGenerators} / 10`;
 
             if (app.player.cooldown > 0) {
