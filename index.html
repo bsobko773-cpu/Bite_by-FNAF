@@ -206,7 +206,6 @@
 </head>
 <body>
 
-    <!-- Меню та Лобі -->
     <div id="ui-layer">
         <div id="panel-menu" class="menu-box">
             <h1>Bite by FNAF</h1>
@@ -240,11 +239,9 @@
         </div>
     </div>
 
-    <!-- Гра -->
     <div id="game-container"></div>
     <div id="crosshair"></div>
 
-    <!-- HUD -->
     <div id="hud">
         <div id="hud-bl" class="hud-panel">
             <div class="hud-label">Життя (HP)</div>
@@ -260,7 +257,7 @@
             <div id="recharge-icon">⚡ ЗАРЯДЖАННЯ В ОФІСІ...</div>
             <div style="margin-top: 20px;">
                 <div id="role-text">Спектатор</div>
-                <div id="ability-text">Дія: [E]</div>
+                <div id="ability-text">Дія: [E] / Tap</div>
                 <div id="cooldown-text"></div>
             </div>
         </div>
@@ -271,7 +268,6 @@
         </div>
     </div>
 
-    <!-- Мобільне Управління -->
     <div id="touch-ui">
         <div id="touch-left">
             <div class="joy-bg"><div class="joy-stick" id="joy-stick"></div></div>
@@ -283,7 +279,6 @@
         </div>
     </div>
 
-    <!-- Скрімер -->
     <div id="jumpscare-screen">
         <div class="scare-flash"></div>
         <div id="scare-face">
@@ -336,11 +331,9 @@
             playFlicker() { this.playSynth('triangle', 120, 30, 0.05, 0.08); }
             playStep(deep) { this.playSynth('triangle', deep ? 60 : 120, 10, 0.12, deep ? 0.35 : 0.15); }
             
-            // Інтеграція завантаженого аудіо-файлу дитячого сміху для Ляльки
             playSpookyLaugh() {
                 try {
                     this.init();
-                    // FIX: Replaced non-existent file with synthetic giggle
                     const now = this.ctx.currentTime;
                     const osc = this.ctx.createOscillator();
                     const gain = this.ctx.createGain();
@@ -357,11 +350,9 @@
                 }
             }
             
-            // Ультимативний крик для скрімера з файлу 80560_2
             playJumpscare() {
                 try {
                     this.init();
-                    // FIX: Replaced non-existent file with a loud, aggressive noise blast
                     const now = this.ctx.currentTime;
                     const bufferSize = this.ctx.sampleRate * 2;
                     const buffer = this.ctx.createBuffer(1, bufferSize, this.ctx.sampleRate);
@@ -1271,6 +1262,107 @@
                 document.addEventListener('keydown', e => handleKey(e.code, true));
                 document.addEventListener('keyup', e => handleKey(e.code, false));
             }
+        }
+
+        function setupTouch() {
+            const touchLeft = document.getElementById('touch-left');
+            const joyStick = document.getElementById('joy-stick');
+            
+            // 1. Джойстик (Рух)
+            touchLeft.addEventListener('touchstart', (e) => {
+                e.preventDefault();
+                app.touch.joyActive = true;
+                const touch = e.changedTouches[0];
+                app.touch.origin = { x: touch.clientX, y: touch.clientY };
+                joyStick.style.transform = `translate(0px, 0px)`;
+            }, {passive: false});
+
+            touchLeft.addEventListener('touchmove', (e) => {
+                e.preventDefault();
+                if (!app.touch.joyActive) return;
+                const touch = e.changedTouches[0];
+                let dx = touch.clientX - app.touch.origin.x;
+                let dy = touch.clientY - app.touch.origin.y;
+                
+                const maxDist = 40;
+                const dist = Math.hypot(dx, dy);
+                if (dist > maxDist) {
+                    dx = (dx / dist) * maxDist;
+                    dy = (dy / dist) * maxDist;
+                }
+                
+                joyStick.style.transform = `translate(${dx}px, ${dy}px)`;
+                
+                // Передаємо значення джойстика у фізичний рушій
+                app.touch.delta.x = dx / maxDist;
+                app.touch.delta.y = dy / maxDist;
+            }, {passive: false});
+
+            touchLeft.addEventListener('touchend', (e) => {
+                e.preventDefault();
+                app.touch.joyActive = false;
+                app.touch.delta = {x: 0, y: 0};
+                joyStick.style.transform = `translate(0px, 0px)`;
+            });
+
+            // 2. Огляд камерою (Свайп по правій частині екрану)
+            document.addEventListener('touchstart', (e) => {
+                // Ігноруємо натискання на UI-кнопки та лівий джойстик
+                if (e.target.closest('#touch-left') || e.target.closest('#touch-actions')) return;
+                const touch = e.changedTouches[0];
+                if (app.touch.lookId === null) {
+                    app.touch.lookId = touch.identifier;
+                    app.touch.lastLook = { x: touch.clientX, y: touch.clientY };
+                }
+            }, {passive: false});
+
+            document.addEventListener('touchmove', (e) => {
+                for (let i = 0; i < e.changedTouches.length; i++) {
+                    const touch = e.changedTouches[i];
+                    if (touch.identifier === app.touch.lookId && app.player.hp > 0) {
+                        app.camera.rotation.y -= (touch.clientX - app.touch.lastLook.x) * 0.005;
+                        app.camera.rotation.x -= (touch.clientY - app.touch.lastLook.y) * 0.005;
+                        // Блокування повороту шиї на 360 градусів
+                        app.camera.rotation.x = Math.max(-Math.PI/2.1, Math.min(Math.PI/2.1, app.camera.rotation.x));
+                        app.touch.lastLook = { x: touch.clientX, y: touch.clientY };
+                    }
+                }
+            }, {passive: false});
+
+            document.addEventListener('touchend', (e) => {
+                for (let i = 0; i < e.changedTouches.length; i++) {
+                    if (e.changedTouches[i].identifier === app.touch.lookId) {
+                        app.touch.lookId = null;
+                    }
+                }
+            });
+
+            // 3. Кнопки Дій
+            document.getElementById('btn-t-action').addEventListener('touchstart', (e) => {
+                e.preventDefault();
+                performAction();
+            });
+
+            document.getElementById('btn-t-jump').addEventListener('touchstart', (e) => {
+                e.preventDefault();
+                if (app.player.isGrounded && app.player.stamina > 20) {
+                    app.player.yVelocity = app.player.jumpForce;
+                    app.player.isGrounded = false;
+                    app.player.stamina -= 22;
+                }
+            });
+
+            const btnSprint = document.getElementById('btn-t-sprint');
+            btnSprint.addEventListener('touchstart', (e) => {
+                e.preventDefault();
+                app.keys.shift = true;
+                btnSprint.style.background = "rgba(0,150,255,0.8)";
+            });
+            btnSprint.addEventListener('touchend', (e) => {
+                e.preventDefault();
+                app.keys.shift = false;
+                btnSprint.style.background = "rgba(0,50,150,0.8)";
+            });
         }
 
         function handleKey(code, isDown) {
